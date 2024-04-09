@@ -79,9 +79,7 @@ class HFHolo(PreTrainedModel):
         feats = self.decoder(tokens)
         logits = self.predict_token(feats)
         if labels is not None:
-            logits = logits.transpose(-1, -2)
-            #loss = F.cross_entropy(logits.view(-1, logits.shape[-1]), labels)
-            loss = F.cross_entropy(logits, labels.long())
+            loss = F.cross_entropy(logits.transpose(-1, -2), labels)
             return {"loss": loss, "logits": logits}
         return {"logits": logits}
 
@@ -90,6 +88,7 @@ class HFHolo(PreTrainedModel):
 
     def set_input_embeddings(self, new_embs):
         self.input_embedding = new_embs
+
 
 AutoModel.register(HFHoloConfig, HoloDecoder)
 AutoModelForCausalLM.register(HFHoloConfig, HFHolo)
