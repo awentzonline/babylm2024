@@ -29,6 +29,7 @@ class HoloLayer(nn.Module):
         kv = torch.multiply(xh_keys, xh_values).cumsum(dim=1)
         xh_queried = torch.multiply(kv, inv_xh_queries)
         # xh_queried = xh_queried / np.sqrt(x.shape[-1])
+        xh_queried = xh_queried / (1e-9 + torch.norm(xh_queried, dim=-1, keepdim=True))
         values = torch.real(hrr.ifft(xh_queried)) / np.sqrt(x.shape[-1])
         return values
 
