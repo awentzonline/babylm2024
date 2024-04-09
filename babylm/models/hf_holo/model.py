@@ -5,6 +5,7 @@ import torch
 from torch import nn
 import torch.nn.functional as F
 from transformers import AutoModel, AutoModelForCausalLM, PreTrainedModel
+from transformers.modeling_outputs import CausalLMOutputWithCrossAttentions
 
 from . import hrr
 from .config import HFHoloConfig
@@ -79,10 +80,24 @@ class HFHolo(PreTrainedModel):
         tokens = self.input_embedding(input_ids)
         feats = self.decoder(tokens)
         logits = self.predict_token(feats)
+        
+        loss = None
         if labels is not None:
             loss = F.cross_entropy(logits.transpose(-1, -2), labels)
-            return {"loss": loss, "logits": logits}
-        return {"logits": logits}
+        
+        if return_dict is not None and not return_dict:
+            output = (logits, feats)
+            output = (loss,) + output if loss else output
+            return output
+        
+        return CausalLMOutputWithCrossAttentions(
+            loss=loss,
+            logits=logits,
+            past_key_values=None,  # transformer_outputs.past_key_values,
+            hidden_states=feats,
+            attentions=None,  # transformer_outputs.attentions,
+            cross_attentions=None,  # transformer_outputs.cross_attentions,
+        )  
 
     def get_input_embeddings(self):
         return self.input_embedding
