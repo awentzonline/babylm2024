@@ -12,7 +12,7 @@ from .config import HFVanConfig
 
 
 class VanAttention(nn.Module):
-    def __init__(self, model_dims, heads):
+    def __init__(self, model_dims, heads, dropout=0.1):
         super().__init__()
         assert model_dims % heads == 0, 'Model dimensionality should be an integer multiple of heads'
         self.head_dims = model_dims // heads
@@ -22,6 +22,8 @@ class VanAttention(nn.Module):
         self.values = nn.Linear(model_dims, model_dims, bias=False)
         self.queries = nn.Linear(model_dims, model_dims, bias=False)
         self.output_proj = nn.Linear(model_dims, model_dims, bias=False)
+        self.attn_dropout = nn.Dropout(dropout)
+        self.resid_dropout = nn.Dropout(dropout)
 
     def forward(self, x_query, x_key, x_value, mask=None):
         q = self.split_heads(self.queries(x_query))
@@ -32,11 +34,12 @@ class VanAttention(nn.Module):
         if mask is not None:
             scores = scores.masked_fill(mask == 0, float('-inf'))
         weights = torch.softmax(scores, dim=-1)
+        weights = self.attn_dropout(weights)
         result = torch.matmul(weights, v)
 
         result = self.combine_heads(result)
         result = self.output_proj(result)
-
+        result = self.resid_dropout(result)
         return result
 
     def split_heads(self, x):
@@ -49,7 +52,7 @@ class VanAttention(nn.Module):
 
 
 class VanLayer(nn.Module):
-    def __init__(self, model_dims, heads):
+    def __init__(self, model_dims, heads, dropout=0.1):
         super().__init__()
         self.norm_pre_attention = nn.LayerNorm(model_dims)
         self.attention = VanAttention(model_dims, heads)
@@ -58,6 +61,7 @@ class VanLayer(nn.Module):
             nn.Linear(model_dims, 4 * model_dims),
             nn.ReLU(),
             nn.Linear(4 * model_dims, model_dims),
+            nn.Dropout(dropout),
         )
 
     def forward(self, x, labels=None, mask=None):
