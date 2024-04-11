@@ -35,7 +35,7 @@ from typing import Optional
 import datasets
 from datasets import load_dataset, load_metric
 
-import babylm.models.hf_holo  # HACK: register my models
+import babylm.models  # HACK: register my models
 
 import transformers
 from transformers import (
