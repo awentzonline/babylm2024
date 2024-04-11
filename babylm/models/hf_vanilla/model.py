@@ -21,6 +21,7 @@ class VanAttention(nn.Module):
         self.keys = nn.Linear(model_dims, model_dims, bias=False)
         self.values = nn.Linear(model_dims, model_dims, bias=False)
         self.queries = nn.Linear(model_dims, model_dims, bias=False)
+        self.output_proj = nn.Linear(model_dims, model_dims, bias=False)
 
     def forward(self, x_query, x_key, x_value, mask=None):
         q = self.split_heads(self.queries(x_query))
@@ -34,6 +35,8 @@ class VanAttention(nn.Module):
         result = torch.matmul(weights, v)
 
         result = self.combine_heads(result)
+        result = self.output_proj(result)
+
         return result
 
     def split_heads(self, x):
