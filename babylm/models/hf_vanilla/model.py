@@ -54,10 +54,10 @@ class VanAttention(nn.Module):
 class VanLayer(nn.Module):
     def __init__(self, model_dims, heads, dropout=0.1):
         super().__init__()
-        self.norm_pre_attention = nn.LayerNorm(model_dims)
+        # self.norm_pre_attention = nn.LayerNorm(model_dims)
         self.attention = VanAttention(model_dims, heads)
         self.ff_net = nn.Sequential(
-            nn.LayerNorm(model_dims),
+            # nn.LayerNorm(model_dims),
             nn.Linear(model_dims, 4 * model_dims),
             nn.ReLU(),
             nn.Linear(4 * model_dims, model_dims),
@@ -65,7 +65,7 @@ class VanLayer(nn.Module):
         )
 
     def forward(self, x, labels=None, mask=None):
-        normed_x = self.norm_pre_attention(x)
+        normed_x = x  # self.norm_pre_attention(x)
         attended = self.attention(normed_x, normed_x, normed_x, mask=mask)
         x = x + attended
         ffed = self.ff_net(x)
@@ -97,6 +97,33 @@ class HFVan(PreTrainedModel):
         self.input_embedding = nn.Embedding(config.vocab_size, config.model_dims)
         self.predict_token = nn.Linear(config.model_dims, config.vocab_size)
         self.positional_encoding = PositionalEncoding(config.model_dims, config.max_seq_length)
+        self.post_init()
+
+    def init_weights(self):
+        self.apply(self._init_weights)
+        depth_scale = (9 * self.config.num_hidden_layers) ** (1. / 4.)
+        for name, p in self.named_parameters():
+            if 'output_proj.weight' in name or 'values.weight' in name:
+                print("scaling", name)
+                p.data *= depth_scale
+            elif 'input_embedding.weight' in name:
+                print("scaling", name)
+                p.data *= depth_scale
+
+    def _init_weights(self, module):
+        """
+        https://www.cs.toronto.edu/~mvolkovs/ICML2020_tfixup.pdf
+        """
+        initializer_range = np.sqrt(self.config.model_dims)
+
+        if isinstance(module, (nn.Linear, nn.Conv1d)):
+            module.weight.data.normal_(mean=0.0, std=initializer_range)
+            if module.bias is not None:
+                module.bias.data.zero_()
+        elif isinstance(module, nn.Embedding):
+            module.weight.data.normal_(mean=0.0, std=initializer_range)
+            if module.padding_idx is not None:
+                module.weight.data[module.padding_idx].zero_()
 
     def forward(
         self,
