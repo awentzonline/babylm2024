@@ -8,7 +8,6 @@ import torch.nn.functional as F
 from transformers import AutoModel, AutoModelForCausalLM, PreTrainedModel
 from transformers.modeling_outputs import CausalLMOutputWithCrossAttentions
 
-from . import hrr
 from .config import HFVanConfig
 
 
