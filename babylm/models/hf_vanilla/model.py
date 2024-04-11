@@ -133,7 +133,7 @@ class HFVan(PreTrainedModel):
         )
 
     def make_causal_mask(self, x):
-        seq = x.shape[2]
+        seq = x.shape[1]
         mask = torch.ones((seq, seq), device=x.device)
         mask = torch.tril(mask).bool()
         return mask
