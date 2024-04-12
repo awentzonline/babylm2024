@@ -420,6 +420,8 @@ def main():
         repetition_penalty=args.repetition_penalty,
         do_sample=True,
         num_return_sequences=args.num_return_sequences,
+        eos_token_id=tokenizer.eos_token_id,
+        pad_token_id=tokenizer.pad_token_id,
     )
 
     # Remove the batch dimension when returning multiple sequences
