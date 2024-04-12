@@ -54,7 +54,7 @@ class VanAttention(nn.Module):
 class VanLayer(nn.Module):
     def __init__(self, model_dims, heads, dropout=0.1):
         super().__init__()
-        # self.norm_pre_attention = nn.LayerNorm(model_dims)
+        self.norm_pre_attention = nn.LayerNorm(model_dims)
         self.attention = VanAttention(model_dims, heads)
         self.ff_net = nn.Sequential(
             # nn.LayerNorm(model_dims),
@@ -81,12 +81,15 @@ class VanDecoder(PreTrainedModel):
             VanLayer(config.model_dims, config.heads)
             for _ in range(config.num_hidden_layers)
         ])
+        self.final_norm = nn.LayerNorm(config.model_dims)
 
     def forward(self, x, labels=None, mask=None):
         for layer in self.layers:
             x = layer(x, mask=mask)
+            # print(list(map(float, (x.min(), x.mean(), x.max()))))
+        #return self.final_norm(x)
         return x
-
+ 
 
 class HFVan(PreTrainedModel):
     config_class = HFVanConfig
@@ -101,29 +104,32 @@ class HFVan(PreTrainedModel):
 
     def init_weights(self):
         self.apply(self._init_weights)
-        depth_scale = (9 * self.config.num_hidden_layers) ** (1. / 4.)
+        depth_scale = (9. * self.config.num_hidden_layers) ** (-1. / 4.)
         for name, p in self.named_parameters():
             if 'output_proj.weight' in name or 'values.weight' in name:
-                print("scaling", name)
                 p.data *= depth_scale
-            elif 'input_embedding.weight' in name:
-                print("scaling", name)
+            elif 'input_embedding.weight' in name or 'positional_encoding.weight' in name:
+                p.data *= depth_scale
+            elif 'ffnet' in name:
                 p.data *= depth_scale
 
     def _init_weights(self, module):
         """
         https://www.cs.toronto.edu/~mvolkovs/ICML2020_tfixup.pdf
         """
-        initializer_range = np.sqrt(self.config.model_dims)
+        initializer_range = 1. / np.sqrt(self.config.model_dims)
 
         if isinstance(module, (nn.Linear, nn.Conv1d)):
-            module.weight.data.normal_(mean=0.0, std=initializer_range)
+            nn.init.xavier_uniform_(module.weight.data)
             if module.bias is not None:
                 module.bias.data.zero_()
         elif isinstance(module, nn.Embedding):
             module.weight.data.normal_(mean=0.0, std=initializer_range)
             if module.padding_idx is not None:
                 module.weight.data[module.padding_idx].zero_()
+        elif isinstance(module, nn.LayerNorm):
+            module.bias.data.zero_()
+            module.weight.data.fill_(1.0)
 
     def forward(
         self,
@@ -150,7 +156,7 @@ class HFVan(PreTrainedModel):
 
         loss = None
         if labels is not None:
-            loss = F.cross_entropy(logits.transpose(-1, -2), labels)
+            loss = F.cross_entropy(logits[:, :-1].transpose(-1, -2), labels[:, 1:])
 
         if return_dict is not None and not return_dict:
             output = (logits, feats)
