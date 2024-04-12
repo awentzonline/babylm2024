@@ -15,24 +15,42 @@ class HoloLayer(nn.Module):
     def __init__(self, model_dims):
         super().__init__()
 
-        self.keys = nn.Linear(model_dims, model_dims)
-        self.values = nn.Linear(model_dims, model_dims)
-        self.queries = nn.Linear(model_dims, model_dims)
+        self.keys = nn.Linear(model_dims, model_dims, bias=False)
+        self.values = nn.Linear(model_dims, model_dims, bias=False)
+        self.queries = nn.Linear(model_dims, model_dims, bias=False)
+        self.gain = nn.Parameter(torch.zeros(1))
+        
+        self.ff_net = nn.Sequential(
+            nn.Linear(model_dims, 4 * model_dims),
+            nn.ReLU(),
+            nn.Linear(4 * model_dims, model_dims),
+        )
+        
+    def forward(self, x, mask=None, labels=None):
+        k = self.keys(x)
+        v = self.values(x)
+        q = self.queries(x)
+        values_hat = hrr.key_value_query(k, v, q, causal=True)
+        # values_presence = F.cosine_similarity(v, values_hat, -1)[..., None]
+        # values_weight = F.softmax(values_presence, -2)
+        # values_hat = values_weight * v
+        x = x + values_hat * self.gain
+        # return x + self.ff_net(x) * self.gain
+        return x# + self.ff_net(x) * self.gain
+         
+        # xh = x #hrr.fft(x)
 
-    def forward(self, x, labels=None):
-        xh = x #hrr.fft(x)
+        # xh_keys = hrr.fft(self.keys(xh))
+        # xh_values = hrr.fft(self.values(xh))
+        # xh_queries = hrr.fft(self.queries(xh))
+        # inv_xh_queries = hrr.inverse(xh_queries)
 
-        xh_keys = hrr.fft(self.keys(xh))
-        xh_values = hrr.fft(self.values(xh))
-        xh_queries = hrr.fft(self.queries(xh))
-        inv_xh_queries = hrr.inverse(xh_queries)
-
-        kv = torch.multiply(xh_keys, xh_values).cumsum(dim=1)
-        xh_queried = torch.multiply(kv, inv_xh_queries)
-        # xh_queried = xh_queried / np.sqrt(x.shape[-1])
-        xh_queried = xh_queried / (1e-9 + torch.norm(xh_queried, dim=-1, keepdim=True))
-        values = torch.real(hrr.ifft(xh_queried)) / np.sqrt(x.shape[-1])
-        return values
+        # kv = torch.multiply(xh_keys, xh_values).cumsum(dim=1)
+        # xh_queried = torch.multiply(kv, inv_xh_queries)
+        # # xh_queried = xh_queried / np.sqrt(x.shape[-1])
+        # xh_queried = xh_queried / (1e-9 + torch.linalg.norm(xh_queried, dim=-1, keepdim=True))
+        # values = torch.real(hrr.ifft(xh_queried))  # / np.sqrt(x.shape[-1])
+        return values #* self.gain
 
 
 class HoloDecoder(PreTrainedModel):
@@ -44,10 +62,12 @@ class HoloDecoder(PreTrainedModel):
             HoloLayer(config.model_dims)
             for _ in range(config.num_hidden_layers)
         ])
-
-    def forward(self, x, labels=None):
+ 
+    def forward(self, x, mask=None, labels=None):
         for layer in self.layers:
-            x = x + layer(x)
+            x = layer(x, mask=mask)
+            # print(list(map(float, (x.min(), x.mean(), x.max()))))
+            #x = x + layer_x
         return x
 
 
@@ -57,8 +77,19 @@ class HFHolo(PreTrainedModel):
     def __init__(self, config):
         super().__init__(config)
         self.decoder = HoloDecoder(config)
+        self.position_embedding = nn.Embedding(config.max_seq_len, config.model_dims)
         self.input_embedding = nn.Embedding(config.vocab_size, config.model_dims)
+        # self.position_embedding.weight.data.eq_(hrr.init_ortho(self.position_embedding.weight.shape))
+        # self.input_embedding.weight.data.eq_(hrr.init_ortho(self.input_embedding.weight.shape))
+        # self.input_embedding.weight.data.eq_(
+        #     torch.randn(self.input_embedding.weight.shape, dtype=torch.float) / config.model_dims,
+        # )
+        
+        self.position_embedding.weight.data.eq_(
+            torch.randn(self.position_embedding.weight.shape, dtype=torch.float) / config.model_dims,
+        )
         self.predict_token = nn.Linear(config.model_dims, config.vocab_size)
+        # self.post_init()
 
     def forward(
         self,
@@ -78,12 +109,20 @@ class HFHolo(PreTrainedModel):
         return_dict: Optional = None,
     ):
         tokens = self.input_embedding(input_ids)
-        feats = self.decoder(tokens)
+        position_ids = torch.arange(tokens.shape[1]).long().to(tokens.device)
+        position_ids = position_ids[None, :].repeat(tokens.shape[0], 1)
+        positions = self.position_embedding(position_ids)
+        #feats = self.decoder(tokens)
+        # feats = self.decoder(hrr.bind(tokens, positions))
+        feats = self.decoder(tokens + positions)
+        # feats = feats / (1e-9 + torch.linalg.norm(feats, dim=-1, keepdim=True))
+        # if np.random.uniform() < 0.1:
+        #     print(list(map(float, [feats.min(), feats.mean(), feats.std(), feats.max()])))
         logits = self.predict_token(feats)
         
         loss = None
         if labels is not None:
-            loss = F.cross_entropy(logits.transpose(-1, -2), labels)
+            loss = F.cross_entropy(logits[:, :-1].transpose(-1, -2), labels[:, 1:])
         
         if return_dict is not None and not return_dict:
             output = (logits, feats)
