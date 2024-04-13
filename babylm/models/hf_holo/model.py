@@ -36,7 +36,7 @@ class HoloLayer(nn.Module):
         # values_hat = values_weight * v
         x = x + values_hat * self.gain
         # return x + self.ff_net(x) * self.gain
-        return x# + self.ff_net(x) * self.gain
+        return x  # + self.ff_net(x) * self.gain
          
         # xh = x #hrr.fft(x)
 
@@ -64,11 +64,19 @@ class HoloDecoder(PreTrainedModel):
         ])
  
     def forward(self, x, mask=None, labels=None):
+        loss = 0.
+        
         for layer in self.layers:
             x = layer(x, mask=mask)
-            # print(list(map(float, (x.min(), x.mean(), x.max()))))
-            #x = x + layer_x
-        return x
+            if labels is not None:
+                layer_loss = x.square().sum()
+                loss = loss + layer_loss
+            print(list(map(float, (x.min(), x.mean(), x.std(), x.max()))))
+            
+        if labels is None:
+            return x
+        else:
+            return x, loss
 
 
 class HFHolo(PreTrainedModel):
@@ -85,10 +93,12 @@ class HFHolo(PreTrainedModel):
         #     torch.randn(self.input_embedding.weight.shape, dtype=torch.float) / config.model_dims,
         # )
         
-        self.position_embedding.weight.data.eq_(
-            torch.randn(self.position_embedding.weight.shape, dtype=torch.float) / config.model_dims,
-        )
+        # self.position_embedding.weight.data.eq_(
+        #     torch.randn(self.position_embedding.weight.shape, dtype=torch.float) / config.model_dims,
+        # )
         self.predict_token = nn.Linear(config.model_dims, config.vocab_size)
+        self.register_buffer('result_vector', torch.randn(config.model_dims) / config.model_dims)
+
         # self.post_init()
 
     def forward(
@@ -114,15 +124,23 @@ class HFHolo(PreTrainedModel):
         positions = self.position_embedding(position_ids)
         #feats = self.decoder(tokens)
         # feats = self.decoder(hrr.bind(tokens, positions))
-        feats = self.decoder(tokens + positions)
+        feats = self.decoder(tokens + positions, labels=labels)
+        if labels is not None:
+            feats, decoder_loss = feats
+        
         # feats = feats / (1e-9 + torch.linalg.norm(feats, dim=-1, keepdim=True))
         # if np.random.uniform() < 0.1:
         #     print(list(map(float, [feats.min(), feats.mean(), feats.std(), feats.max()])))
+        feats = hrr.unbind(feats, self.result_vector)
+        feats = feats# / (torch.linalg.norm(feats, dim=-1, keepdim=True) + 1e-9)
         logits = self.predict_token(feats)
         
-        loss = None
+        loss = 0.
         if labels is not None:
             loss = F.cross_entropy(logits[:, :-1].transpose(-1, -2), labels[:, 1:])
+
+            logit_loss = logits.square().mean() #+ logits.abs().sum()
+            loss = loss + logit_loss# + decoder_loss
         
         if return_dict is not None and not return_dict:
             output = (logits, feats)
