@@ -91,10 +91,10 @@ def key_value_query(
 
 def rebind(kv, a, b, do_fft=True):
     """Unbinds key a and then rebinds the value with key b"""
+    a = inverse(a)
     if do_fft:
         kv, a, b = map(fft, (kv, a, b))
-    a_inv = inverse(a)
-    a_val = torch.multiply(kv, a_inv)
+    a_val = torch.multiply(kv, a)
     bkv = torch.multiply(b, a_val)
     result = kv + bkv
     if do_fft:

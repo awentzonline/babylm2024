@@ -11,46 +11,69 @@ from . import hrr
 from .config import HFHoloConfig
 
 
-class HoloLayer(nn.Module):
+class SelfAttention(nn.Module):
     def __init__(self, model_dims):
         super().__init__()
-
+        self.queries = nn.Linear(model_dims, model_dims, bias=False)
         self.keys = nn.Linear(model_dims, model_dims, bias=False)
         self.values = nn.Linear(model_dims, model_dims, bias=False)
-        self.queries = nn.Linear(model_dims, model_dims, bias=False)
-        self.gain = nn.Parameter(torch.zeros(1))
-        
+
+    def forward(self, x, causal=True, mask=None):
+        q = self.queries(x)
+        k = self.keys(x)
+        v = self.values(x)
+        values_hat = hrr.key_value_query(k, v, q, causal=True)
+        return values_hat
+
+
+class Rebind(nn.Module):
+    def __init__(self, model_dims):
+        super().__init__()
+        self.rebind_a = nn.Linear(model_dims, model_dims, bias=False)
+        self.rebind_b = nn.Linear(model_dims, model_dims, bias=False)
+
+    def forward(self, x):
+        rebind_a = self.rebind_a(x)
+        rebind_b = self.rebind_b(x)
+        # rebound = hrr.rebind(x, rebind_a, rebind_b)
+        values_a = hrr.unbind(x, rebind_a)
+        x = x - hrr.bind(rebind_a, values_a) + hrr.bind(rebind_b, values_a)
+        return x
+
+
+class Transform(nn.Module):
+    def __init__(self, model_dims):
+        super().__init__()
+        self.keys = nn.Linear(model_dims, model_dims, bias=False)
         self.ff_net = nn.Sequential(
             nn.Linear(model_dims, 4 * model_dims),
             nn.ReLU(),
             nn.Linear(4 * model_dims, model_dims),
         )
-        
+
+    def forward(self, x):
+        keys = self.keys(x)
+        values = hrr.unbind(x, keys)
+        values_transformed = self.ff_net(values)
+        x = x - hrr.bind(keys, values) + hrr.bind(keys, values_transformed)
+        return x
+
+
+class HoloLayer(nn.Module):
+    def __init__(self, model_dims, gain_init=1.):
+        super().__init__()
+        self.self_attention = SelfAttention(model_dims)
+        self.rebind = Rebind(model_dims)
+        self.transform = Transform(model_dims)
+
+        self.gain = nn.Parameter(torch.full((1,), gain_init))
+
     def forward(self, x, mask=None, labels=None):
-        k = self.keys(x)
-        v = self.values(x)
-        q = self.queries(x)
-        values_hat = hrr.key_value_query(k, v, q, causal=True)
-        # values_presence = F.cosine_similarity(v, values_hat, -1)[..., None]
-        # values_weight = F.softmax(values_presence, -2)
-        # values_hat = values_weight * v
-        x = x + values_hat * self.gain
-        # return x + self.ff_net(x) * self.gain
-        return x  # + self.ff_net(x) * self.gain
-         
-        # xh = x #hrr.fft(x)
-
-        # xh_keys = hrr.fft(self.keys(xh))
-        # xh_values = hrr.fft(self.values(xh))
-        # xh_queries = hrr.fft(self.queries(xh))
-        # inv_xh_queries = hrr.inverse(xh_queries)
-
-        # kv = torch.multiply(xh_keys, xh_values).cumsum(dim=1)
-        # xh_queried = torch.multiply(kv, inv_xh_queries)
-        # # xh_queried = xh_queried / np.sqrt(x.shape[-1])
-        # xh_queried = xh_queried / (1e-9 + torch.linalg.norm(xh_queried, dim=-1, keepdim=True))
-        # values = torch.real(hrr.ifft(xh_queried))  # / np.sqrt(x.shape[-1])
-        return values #* self.gain
+        values_hat = self.self_attention(x)
+        x = x + values_hat
+        x = self.rebind(x)
+        x = self.transform(x)
+        return x
 
 
 class HoloDecoder(PreTrainedModel):
@@ -62,17 +85,17 @@ class HoloDecoder(PreTrainedModel):
             HoloLayer(config.model_dims)
             for _ in range(config.num_hidden_layers)
         ])
- 
+
     def forward(self, x, mask=None, labels=None):
         loss = 0.
-        
+
         for layer in self.layers:
             x = layer(x, mask=mask)
             if labels is not None:
                 layer_loss = x.square().sum()
                 loss = loss + layer_loss
             print(list(map(float, (x.min(), x.mean(), x.std(), x.max()))))
-            
+
         if labels is None:
             return x
         else:
@@ -87,15 +110,12 @@ class HFHolo(PreTrainedModel):
         self.decoder = HoloDecoder(config)
         self.position_embedding = nn.Embedding(config.max_seq_len, config.model_dims)
         self.input_embedding = nn.Embedding(config.vocab_size, config.model_dims)
-        # self.position_embedding.weight.data.eq_(hrr.init_ortho(self.position_embedding.weight.shape))
-        # self.input_embedding.weight.data.eq_(hrr.init_ortho(self.input_embedding.weight.shape))
-        # self.input_embedding.weight.data.eq_(
-        #     torch.randn(self.input_embedding.weight.shape, dtype=torch.float) / config.model_dims,
-        # )
-        
-        # self.position_embedding.weight.data.eq_(
-        #     torch.randn(self.position_embedding.weight.shape, dtype=torch.float) / config.model_dims,
-        # )
+        self.input_embedding.weight.data.copy_(
+            torch.randn(self.input_embedding.weight.shape, dtype=torch.float) / config.model_dims,
+        )
+        self.position_embedding.weight.data.copy_(
+            torch.randn(self.position_embedding.weight.shape, dtype=torch.float) / config.model_dims,
+        )
         self.predict_token = nn.Linear(config.model_dims, config.vocab_size)
         self.register_buffer('result_vector', torch.randn(config.model_dims) / config.model_dims)
 
@@ -122,31 +142,28 @@ class HFHolo(PreTrainedModel):
         position_ids = torch.arange(tokens.shape[1]).long().to(tokens.device)
         position_ids = position_ids[None, :].repeat(tokens.shape[0], 1)
         positions = self.position_embedding(position_ids)
-        #feats = self.decoder(tokens)
-        # feats = self.decoder(hrr.bind(tokens, positions))
-        feats = self.decoder(tokens + positions, labels=labels)
+        inputs = hrr.bind(tokens, positions)
+        #inputs = tokens + positions
+        feats = self.decoder(inputs, labels=labels)
         if labels is not None:
             feats, decoder_loss = feats
-        
-        # feats = feats / (1e-9 + torch.linalg.norm(feats, dim=-1, keepdim=True))
-        # if np.random.uniform() < 0.1:
-        #     print(list(map(float, [feats.min(), feats.mean(), feats.std(), feats.max()])))
+
         feats = hrr.unbind(feats, self.result_vector)
-        feats = feats# / (torch.linalg.norm(feats, dim=-1, keepdim=True) + 1e-9)
+        feats = feats / (torch.linalg.norm(feats, dim=-1, keepdim=True) + 1e-9)
         logits = self.predict_token(feats)
-        
+
         loss = 0.
         if labels is not None:
             loss = F.cross_entropy(logits[:, :-1].transpose(-1, -2), labels[:, 1:])
 
-            logit_loss = logits.square().mean() #+ logits.abs().sum()
-            loss = loss + logit_loss# + decoder_loss
-        
+            # logit_loss = logits.square().sum() * 0.01  # + logits.abs().sum() * 0.01
+            # loss = loss + logit_loss  # + decoder_loss
+
         if return_dict is not None and not return_dict:
             output = (logits, feats)
             output = (loss,) + output if loss else output
             return output
-        
+
         return CausalLMOutputWithCrossAttentions(
             loss=loss,
             logits=logits,
@@ -154,7 +171,7 @@ class HFHolo(PreTrainedModel):
             hidden_states=feats,
             attentions=None,  # transformer_outputs.attentions,
             cross_attentions=None,  # transformer_outputs.cross_attentions,
-        )  
+        )
 
     def get_input_embeddings(self):
         return self.input_embedding
