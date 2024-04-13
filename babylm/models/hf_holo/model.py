@@ -35,9 +35,9 @@ class Rebind(nn.Module):
     def forward(self, x):
         rebind_a = self.rebind_a(x)
         rebind_b = self.rebind_b(x)
-        # rebound = hrr.rebind(x, rebind_a, rebind_b)
-        values_a = hrr.unbind(x, rebind_a)
-        x = x - hrr.bind(rebind_a, values_a) + hrr.bind(rebind_b, values_a)
+        x = hrr.rebind(x, rebind_a, rebind_b)
+        # values_a = hrr.unbind(x, rebind_a)
+        # x = x - hrr.bind(rebind_a, values_a) + hrr.bind(rebind_b, values_a)
         return x
 
 
