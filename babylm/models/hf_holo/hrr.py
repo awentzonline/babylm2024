@@ -87,3 +87,16 @@ def key_value_query(
     # unbind values for each query
     qv = torch.real(ifft(torch.multiply(r, inv_q)))
     return qv
+
+
+def rebind(kv, a, b, do_fft=True):
+    """Unbinds key a and then rebinds the value with key b"""
+    if do_fft:
+        kv, a, b = map(fft, (kv, a, b))
+    a_inv = inverse(a)
+    a_val = torch.multiply(kv, a_inv)
+    bkv = torch.multiply(b, a_val)
+    result = kv + bkv
+    if do_fft:
+        result = torch.real(ifft(result))
+    return result
