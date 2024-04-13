@@ -111,10 +111,12 @@ class HFHolo(PreTrainedModel):
         self.position_embedding = nn.Embedding(config.max_seq_len, config.model_dims)
         self.input_embedding = nn.Embedding(config.vocab_size, config.model_dims)
         self.input_embedding.weight.data.copy_(
-            torch.randn(self.input_embedding.weight.shape, dtype=torch.float) / config.model_dims,
+            # torch.randn(self.input_embedding.weight.shape, dtype=torch.float) / config.model_dims,
+            hrr.init(self.input_embedding.weight.shape),
         )
         self.position_embedding.weight.data.copy_(
-            torch.randn(self.position_embedding.weight.shape, dtype=torch.float) / config.model_dims,
+            # torch.randn(self.position_embedding.weight.shape, dtype=torch.float) / config.model_dims,
+            hrr.init(self.position_embedding.weight.shape),
         )
         self.predict_token = nn.Linear(config.model_dims, config.vocab_size)
         self.register_buffer('result_vector', torch.randn(config.model_dims) / config.model_dims)
