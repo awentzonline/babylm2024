@@ -112,15 +112,24 @@ class HFHolo(PreTrainedModel):
         self.position_embedding = nn.Embedding(config.max_seq_len, config.model_dims)
         self.input_embedding = nn.Embedding(config.vocab_size, config.model_dims)
         self.input_embedding.weight.data.copy_(
-            # torch.randn(self.input_embedding.weight.shape, dtype=torch.float) / config.model_dims,
             hrr.init(self.input_embedding.weight.shape),
         )
         self.position_embedding.weight.data.copy_(
-            # torch.randn(self.position_embedding.weight.shape, dtype=torch.float) / config.model_dims,
             hrr.init(self.position_embedding.weight.shape),
         )
-        self.predict_token = nn.Linear(config.model_dims, config.vocab_size)
-        self.register_buffer('result_vector', torch.randn(config.model_dims) / config.model_dims)
+        self.predict_token = nn.Linear(config.model_dims, config.vocab_size, bias=False)
+        self.predict_token.weight.data.copy_(
+            hrr.init(self.predict_token.weight.shape),
+        )
+        self.register_buffer('result_vector', hrr.init((config.model_dims,)))
+
+        freeze_list = []
+        if not config.learn_input_embs:
+            freeze_list += [self.input_embedding, self.position_embedding]
+        if not config.learn_output_embs:
+            freeze_list += [self.predict_token]
+        if freeze_list:
+            list(map(lambda x: x.requires_grad_(False), freeze_list))
 
         # self.post_init()
 
