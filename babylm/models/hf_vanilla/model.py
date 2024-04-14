@@ -89,7 +89,7 @@ class VanDecoder(PreTrainedModel):
             # print(list(map(float, (x.min(), x.mean(), x.max()))))
         #return self.final_norm(x)
         return x
- 
+
 
 class HFVan(PreTrainedModel):
     config_class = HFVanConfig
@@ -98,7 +98,7 @@ class HFVan(PreTrainedModel):
         super().__init__(config)
         self.decoder = VanDecoder(config)
         self.input_embedding = nn.Embedding(config.vocab_size, config.model_dims)
-        self.predict_token = nn.Linear(config.model_dims, config.vocab_size)
+        self.predict_token = nn.Linear(config.model_dims, config.vocab_size, bias=False)
         self.positional_encoding = PositionalEncoding(config.model_dims, config.max_seq_length)
         self.post_init()
 
