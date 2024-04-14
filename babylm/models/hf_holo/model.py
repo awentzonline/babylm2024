@@ -46,16 +46,17 @@ class Transform(nn.Module):
         super().__init__()
         self.keys = nn.Linear(model_dims, model_dims, bias=False)
         self.ff_net = nn.Sequential(
-            nn.Linear(model_dims, 4 * model_dims),
+            nn.Linear(2 * model_dims, 4 * model_dims),
             nn.ReLU(),
-            nn.Linear(4 * model_dims, model_dims),
+            nn.Linear(4 * model_dims, 2 * model_dims),
         )
 
     def forward(self, x):
         keys = self.keys(x)
-        values = hrr.unbind(x, keys)
-        values_transformed = self.ff_net(values)
-        x = x - hrr.bind(keys, values) + hrr.bind(keys, values_transformed)
+        x = hrr.transform(x, keys, self.ff_net)
+        # values = hrr.unbind(x, keys)
+        # values_transformed = self.ff_net(values)
+        # x = x - hrr.bind(keys, values) + hrr.bind(keys, values_transformed)
         return x
 
 

@@ -1,6 +1,8 @@
 """
 HHR ops from https://arxiv.org/pdf/2109.02157.pdf
 """
+import copy
+
 import torch
 from torch.distributions import Normal
 #from torch.fft import fft, ifft
@@ -98,10 +100,46 @@ def rebind(kv, a, b, do_fft=True):
     # result = kv + new_key_kv - old_key_kv
     # result = kv + b * av - a * av
     # result = kv + av * (b - a)
-    # result = kv + kv * a_inv * (b - a)
-    # result = kv * (1 + a_inv * (b - a))
-    result = kv * (1 + a_inv * (b - a))
+    result = kv + kv * a_inv * (b - a)
 
+    if do_fft:
+        result = torch.real(ifft(result))
+    return result
+
+
+def transform(kv, a, f, do_fft=True):
+    """Unbinds key a and then rebinds the same key with a transformed value"""
+    a_inv = inverse(a)
+    if do_fft:
+        kv, a, a_inv = map(fft, (kv, a, a_inv))
+
+    v = kv * a_inv
+    vs = v.shape
+    flat_real_shape = vs[:-1] + (vs[-1] * 2,)
+    v_real = torch.view_as_real(v)
+    real_shape = v_real.shape
+    v_real = v_real.view(*flat_real_shape)
+    fv = f(v_real)
+    fv = torch.view_as_complex(fv.view(real_shape))
+    # result = kv + new_key_kv - old_key_kv
+    # result = kv + a * tv - a * v
+    # result = kv + a * (tv - v)
+    result = kv + a * (fv - v)
+
+    if do_fft:
+        result = torch.real(ifft(result))
+    return result
+
+
+def transform_rebind(kv, a, b, f, do_fft=True):
+    """Unbinds key a and then binds the transformed value to key b"""
+    a_inv = inverse(a)
+    if do_fft:
+        kv, a, a_inv, b = map(fft, (kv, a, a_inv, b))
+
+    a_value = kv * a_inv
+    # result = kv + new_kv - old_kv
+    result = kv + b * f(a_value.view_as) - a * a_value
     if do_fft:
         result = torch.real(ifft(result))
     return result
