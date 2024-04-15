@@ -83,9 +83,9 @@ def key_value_query(
         inv_q = inv_q / (torch.norm(inv_q, dim=-1, keepdim=True) + eps)
     kv = torch.multiply(k, v)
     if causal:
-        r = kv.cumsum(dim=1)
+        r = kv.cumsum(dim=-2)
     else:
-        r = kv.sum(dim=1, keepdim=True)
+        r = kv.sum(dim=-2, keepdim=True)
     # unbind values for each query
     qv = torch.real(ifft(torch.multiply(r, inv_q)))
     return qv
@@ -142,4 +142,18 @@ def transform_rebind(kv, a, b, f, do_fft=True):
     result = kv + b * f(a_value.view_as) - a * a_value
     if do_fft:
         result = torch.real(ifft(result))
+    return result
+
+
+def wrap_real_transform(f, arg):
+    """
+    View a complex tensor `arg` as real-valued with final dimension doubled in size then apply
+    a function `f` and reshape result to complex values by halving size of last dimension.
+    """
+    flat_real_shape = arg.shape[:-1] + (arg.shape[-1] * 2,)
+    arg_real = torch.view_as_real(arg)
+    real_shape = arg_real.shape
+    arg_real = arg_real.view(*flat_real_shape)
+    result = f(arg_real)
+    result = torch.view_as_complex(result.view(real_shape))
     return result

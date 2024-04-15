@@ -77,13 +77,55 @@ class HoloLayer(nn.Module):
         return x
 
 
+class FullHoloLayer(nn.Module):
+    def __init__(self, model_dims, gain_init=1., is_causal=True):
+        super().__init__()
+        self.queries = nn.Linear(model_dims, model_dims, bias=False)
+        self.keys = nn.Linear(model_dims, model_dims, bias=False)
+        self.values = nn.Linear(model_dims, model_dims, bias=False)
+
+        self.transform_source = nn.Linear(model_dims, model_dims, bias=False)
+        self.transform_target = nn.Linear(model_dims, model_dims, bias=False)
+        self.ff_net = nn.Sequential(
+            nn.Linear(2 * model_dims, 4 * model_dims),
+            nn.ReLU(),
+            nn.Linear(4 * model_dims, 2 * model_dims),
+        )
+        self.is_causal = is_causal
+
+    def forward(self, x, mask=None, labels=None):
+        x_hat = hrr.fft(x)
+        # self attention
+        q = self.queries(x)
+        k = hrr.fft(self.keys(x))
+        v = hrr.fft(self.values(x))
+        attention_values = hrr.fft(hrr.inverse(q)) * k * v
+        if self.is_causal:
+            attention_values = attention_values.cumsum(-2)
+        else:
+            attention_values = attention_values.sum(-2, keepdim=True)
+
+        x_hat = x_hat + attention_values
+        # MLP transform
+        source = self.transform_source(x)
+        source_inv = hrr.fft(hrr.inverse(source))
+        source = hrr.fft(source)
+        target = hrr.fft(self.transform_target(x))
+        t_args = source_inv * x_hat
+        transformed = hrr.wrap_real_transform(self.ff_net, t_args)
+        x_hat = x_hat + target * transformed - source * t_args
+
+        return torch.real(hrr.ifft(x))
+
+
 class HoloDecoder(PreTrainedModel):
     config_class = HFHoloConfig
 
     def __init__(self, config):
         super().__init__(config)
+        layer_class = HoloLayer
         self.layers = nn.ModuleList([
-            HoloLayer(config.model_dims)
+            layer_class(config.model_dims)
             for _ in range(config.num_hidden_layers)
         ])
 
@@ -122,6 +164,7 @@ class HFHolo(PreTrainedModel):
             hrr.init(self.predict_token.weight.shape),
         )
         self.register_buffer('result_vector', hrr.init((config.model_dims,)))
+        self.cleanup_kv = CleanUpKV(config.model_dims)
 
         freeze_list = []
         if not config.learn_input_embs:
@@ -161,7 +204,8 @@ class HFHolo(PreTrainedModel):
             feats, decoder_loss = feats
 
         feats = hrr.unbind(feats, self.result_vector)
-        feats = feats / (torch.linalg.norm(feats, dim=-1, keepdim=True) + 1e-9)
+        feats = self.cleanup_kv(feats)
+        # feats = feats / (torch.linalg.norm(feats, dim=-1, keepdim=True) + 1e-9)
         logits = self.predict_token(feats)
 
         loss = 0.
@@ -240,6 +284,19 @@ class HFHolo(PreTrainedModel):
         )
 
         return model_inputs
+
+
+class CleanUpKV(nn.Module):
+    def __init__(self, model_dims, num_support=64):
+        super().__init__()
+        self.register_buffer('vectors', hrr.init((num_support, model_dims)))
+
+    def forward(self, x):
+        x = x / (torch.linalg.norm(x, dim=-1, keepdim=True) + 1e-9)
+        scores = torch.matmul(x, self.vectors.transpose(-1, -2))
+        weights = torch.softmax(scores, dim=-1)
+        values = torch.matmul(weights, self.vectors)
+        return values
 
 
 AutoModel.register(HFHoloConfig, HoloDecoder)
