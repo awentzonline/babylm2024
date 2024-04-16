@@ -228,7 +228,7 @@ class HFHolo(PreTrainedModel):
         if labels is not None:
             feats, decoder_loss = feats
 
-        # feats = hrr.unbind(feats, self.result_vector)
+        feats = hrr.unbind(feats, self.result_vector)
         feats = self.cleanup_kv(feats)
         feats = feats / (torch.linalg.norm(feats, dim=-1, keepdim=True) + 1e-9)
         logits = self.predict_token(feats)
