@@ -14,16 +14,40 @@ from .config import HFHoloConfig
 class SelfAttention(nn.Module):
     def __init__(self, model_dims):
         super().__init__()
+        self.model_dims = model_dims
         self.queries = nn.Linear(model_dims, model_dims, bias=False)
         self.keys = nn.Linear(model_dims, model_dims, bias=False)
         self.values = nn.Linear(model_dims, model_dims, bias=False)
+
+        self.init_weights()
 
     def forward(self, x, causal=True, mask=None):
         q = self.queries(x)
         k = self.keys(x)
         v = self.values(x)
-        values_hat = hrr.key_value_query(k, v, q, causal=True)
+        values_hat = hrr.key_value_query(k, v, q, causal=True, norm=True)
         return values_hat
+
+    def init_weights(self):
+        self.apply(self._init_weights)
+
+    def _init_weights(self, module):
+        """
+        https://www.cs.toronto.edu/~mvolkovs/ICML2020_tfixup.pdf
+        """
+        initializer_range = 1. / np.sqrt(self.model_dims)
+
+        if isinstance(module, (nn.Linear, nn.Conv1d)):
+            nn.init.xavier_uniform_(module.weight.data)
+            if module.bias is not None:
+                module.bias.data.zero_()
+        elif isinstance(module, nn.Embedding):
+            module.weight.data.normal_(mean=0.0, std=initializer_range)
+            if module.padding_idx is not None:
+                module.weight.data[module.padding_idx].zero_()
+        elif isinstance(module, nn.LayerNorm):
+            module.bias.data.zero_()
+            module.weight.data.fill_(1.0)
 
 
 class Rebind(nn.Module):
@@ -72,8 +96,8 @@ class HoloLayer(nn.Module):
     def forward(self, x, mask=None, labels=None):
         values_hat = self.self_attention(x)
         x = x + values_hat
-        x = self.rebind(x)
-        x = self.transform(x)
+        # x = self.rebind(x)
+        # x = self.transform(x)
         return x
 
 
@@ -134,9 +158,10 @@ class HoloDecoder(PreTrainedModel):
 
         for layer in self.layers:
             x = layer(x, mask=mask)
+
             if labels is not None:
                 layer_loss = x.square().sum()
-                loss = loss + layer_loss
+                loss = loss# + layer_loss
             print(list(map(float, (x.min(), x.mean(), x.std(), x.max()))))
 
         if labels is None:
@@ -203,9 +228,9 @@ class HFHolo(PreTrainedModel):
         if labels is not None:
             feats, decoder_loss = feats
 
-        feats = hrr.unbind(feats, self.result_vector)
+        # feats = hrr.unbind(feats, self.result_vector)
         feats = self.cleanup_kv(feats)
-        # feats = feats / (torch.linalg.norm(feats, dim=-1, keepdim=True) + 1e-9)
+        feats = feats / (torch.linalg.norm(feats, dim=-1, keepdim=True) + 1e-9)
         logits = self.predict_token(feats)
 
         loss = 0.
@@ -286,16 +311,33 @@ class HFHolo(PreTrainedModel):
         return model_inputs
 
 
-class CleanUpKV(nn.Module):
-    def __init__(self, model_dims, num_support=64):
+class CleanupBlock(nn.Module):
+    def __init__(self, model_dims, num_layers):
         super().__init__()
-        self.register_buffer('vectors', hrr.init((num_support, model_dims)))
+        self.modules = nn.ModuleList([
+            CleanUpKV(model_dims) for _ in range(num_layers)
+        ])
+
+    def forward(self, x):
+        for module in self.modules:
+            x = module(x)
+
+
+class CleanUpKV(nn.Module):
+    def __init__(self, model_dims, num_support=256):
+        super().__init__()
+        # self.keys = nn.Parameter(hrr.init((num_support, model_dims)), requires_grad=True)
+        # self.values = nn.Parameter(hrr.init((num_support, model_dims)), requires_grad=True)
+        self.keys = nn.Parameter(torch.randn((num_support, model_dims)), requires_grad=True)
+        self.values = nn.Parameter(torch.randn((num_support, model_dims)), requires_grad=True)
 
     def forward(self, x):
         x = x / (torch.linalg.norm(x, dim=-1, keepdim=True) + 1e-9)
-        scores = torch.matmul(x, self.vectors.transpose(-1, -2))
+        scores = torch.matmul(x, self.keys.transpose(-1, -2))
         weights = torch.softmax(scores, dim=-1)
-        values = torch.matmul(weights, self.vectors)
+        values = torch.matmul(weights, self.values)
+        # dx = x - values
+        # print('kv dx', list(map(float, [dx.min(), dx.mean(), dx.std(), dx.max()])))
         return values
 
 
