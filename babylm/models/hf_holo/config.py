@@ -12,6 +12,7 @@ class HFHoloConfig(PretrainedConfig):
         max_seq_len: int = 1024,
         learn_input_embs: bool = True,
         learn_output_embs: bool = True,
+        attention_class: str = 'rr',
         **kwargs
     ):
         self.vocab_size = vocab_size
@@ -20,6 +21,7 @@ class HFHoloConfig(PretrainedConfig):
         self.max_seq_len = max_seq_len
         self.learn_input_embs = learn_input_embs
         self.learn_output_embs = learn_output_embs
+        self.attention_class = attention_class
         super().__init__(**kwargs)
 
 

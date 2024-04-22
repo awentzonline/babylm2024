@@ -11,7 +11,52 @@ from . import hrr
 from .config import HFHoloConfig
 
 
-class SelfAttention(nn.Module):
+class RRSelfAttention(nn.Module):
+    def __init__(self, model_dims):
+        super().__init__()
+        self.model_dims = model_dims
+        self.queries = nn.Linear(model_dims, model_dims, bias=False)
+        self.keys = nn.Linear(model_dims, model_dims, bias=False)
+        self.values = nn.Linear(model_dims, model_dims, bias=False)
+
+        self.init_weights()
+
+    def forward(self, x, causal=True, mask=None):
+        q = self.queries(x)
+        k = self.keys(x)
+        v = self.values(x)
+        kvt = k * v
+        if causal:
+            denom = torch.sqrt(torch.arange(1, x.shape[-2] + 1))[None, ..., None]
+            kvt = kvt.cumsum(-2) / denom
+        else:
+            kvt = kvt.sum(-2, keepdim=True) / torch.sqrt(x.shape[-2])
+        values_hat = q * kvt
+        return values_hat
+
+    def init_weights(self):
+        self.apply(self._init_weights)
+
+    def _init_weights(self, module):
+        """
+        https://www.cs.toronto.edu/~mvolkovs/ICML2020_tfixup.pdf
+        """
+        initializer_range = 1. / np.sqrt(self.model_dims)
+
+        if isinstance(module, (nn.Linear, nn.Conv1d)):
+            nn.init.xavier_uniform_(module.weight.data)
+            if module.bias is not None:
+                module.bias.data.zero_()
+        elif isinstance(module, nn.Embedding):
+            module.weight.data.normal_(mean=0.0, std=initializer_range)
+            if module.padding_idx is not None:
+                module.weight.data[module.padding_idx].zero_()
+        elif isinstance(module, nn.LayerNorm):
+            module.bias.data.zero_()
+            module.weight.data.fill_(1.0)
+
+
+class HRRSelfAttention(nn.Module):
     def __init__(self, model_dims):
         super().__init__()
         self.model_dims = model_dims
@@ -85,9 +130,9 @@ class Transform(nn.Module):
 
 
 class HoloLayer(nn.Module):
-    def __init__(self, model_dims, gain_init=1.):
+    def __init__(self, model_dims, gain_init=1., attention_class=RRSelfAttention):
         super().__init__()
-        self.self_attention = SelfAttention(model_dims)
+        self.self_attention = attention_class(model_dims)
         self.rebind = Rebind(model_dims)
         self.transform = Transform(model_dims)
 
@@ -148,8 +193,13 @@ class HoloDecoder(PreTrainedModel):
     def __init__(self, config):
         super().__init__(config)
         layer_class = HoloLayer
+        attention_class = dict(
+            rr=RRSelfAttention,
+            hrr=HRRSelfAttention,
+        )[config.attention_class]
+
         self.layers = nn.ModuleList([
-            layer_class(config.model_dims)
+            layer_class(config.model_dims, attention_class=attention_class)
             for _ in range(config.num_hidden_layers)
         ])
 
@@ -162,7 +212,7 @@ class HoloDecoder(PreTrainedModel):
             if labels is not None:
                 layer_loss = x.square().sum()
                 loss = loss# + layer_loss
-            print(list(map(float, (x.min(), x.mean(), x.std(), x.max()))))
+            # print(list(map(float, (x.min(), x.mean(), x.std(), x.max()))))
 
         if labels is None:
             return x
@@ -188,7 +238,7 @@ class HFHolo(PreTrainedModel):
         self.predict_token.weight.data.copy_(
             hrr.init(self.predict_token.weight.shape),
         )
-        self.register_buffer('result_vector', hrr.init((config.model_dims,)))
+        self.register_buffer('result_vector', hrr.init((config.model_dims,)).contiguous())
         self.cleanup_kv = CleanUpKV(config.model_dims)
 
         freeze_list = []
@@ -229,13 +279,15 @@ class HFHolo(PreTrainedModel):
             feats, decoder_loss = feats
 
         feats = hrr.unbind(feats, self.result_vector)
-        feats = self.cleanup_kv(feats)
+        # feats = self.cleanup_kv(feats)
         feats = feats / (torch.linalg.norm(feats, dim=-1, keepdim=True) + 1e-9)
         logits = self.predict_token(feats)
 
         loss = 0.
         if labels is not None:
-            loss = F.cross_entropy(logits[:, :-1].transpose(-1, -2), labels[:, 1:])
+            preds = logits[:, :-1].view(-1, logits.shape[-1]).contiguous()
+            targets = labels[:, 1:].view(-1).contiguous()
+            loss = F.cross_entropy(preds, targets)
 
             # logit_loss = logits.square().sum() * 0.01  # + logits.abs().sum() * 0.01
             # loss = loss + logit_loss  # + decoder_loss
