@@ -1,5 +1,6 @@
 from typing import Optional
 
+import mup
 import numpy as np
 import torch
 from torch import nn
@@ -19,8 +20,6 @@ class RRSelfAttention(nn.Module):
         self.keys = nn.Linear(model_dims, model_dims, bias=False)
         self.values = nn.Linear(model_dims, model_dims, bias=False)
 
-        self.init_weights()
-
     def forward(self, x, causal=True, mask=None):
         q = self.queries(x)
         k = self.keys(x)
@@ -34,27 +33,6 @@ class RRSelfAttention(nn.Module):
         values_hat = q * kvt
         return values_hat
 
-    def init_weights(self):
-        self.apply(self._init_weights)
-
-    def _init_weights(self, module):
-        """
-        https://www.cs.toronto.edu/~mvolkovs/ICML2020_tfixup.pdf
-        """
-        initializer_range = 1. / np.sqrt(self.model_dims)
-
-        if isinstance(module, (nn.Linear, nn.Conv1d)):
-            nn.init.xavier_uniform_(module.weight.data)
-            if module.bias is not None:
-                module.bias.data.zero_()
-        elif isinstance(module, nn.Embedding):
-            module.weight.data.normal_(mean=0.0, std=initializer_range)
-            if module.padding_idx is not None:
-                module.weight.data[module.padding_idx].zero_()
-        elif isinstance(module, nn.LayerNorm):
-            module.bias.data.zero_()
-            module.weight.data.fill_(1.0)
-
 
 class HRRSelfAttention(nn.Module):
     def __init__(self, model_dims):
@@ -64,35 +42,12 @@ class HRRSelfAttention(nn.Module):
         self.keys = nn.Linear(model_dims, model_dims, bias=False)
         self.values = nn.Linear(model_dims, model_dims, bias=False)
 
-        self.init_weights()
-
     def forward(self, x, causal=True, mask=None):
         q = self.queries(x)
         k = self.keys(x)
         v = self.values(x)
         values_hat = hrr.key_value_query(k, v, q, causal=True, norm=True)
         return values_hat
-
-    def init_weights(self):
-        self.apply(self._init_weights)
-
-    def _init_weights(self, module):
-        """
-        https://www.cs.toronto.edu/~mvolkovs/ICML2020_tfixup.pdf
-        """
-        initializer_range = 1. / np.sqrt(self.model_dims)
-
-        if isinstance(module, (nn.Linear, nn.Conv1d)):
-            nn.init.xavier_uniform_(module.weight.data)
-            if module.bias is not None:
-                module.bias.data.zero_()
-        elif isinstance(module, nn.Embedding):
-            module.weight.data.normal_(mean=0.0, std=initializer_range)
-            if module.padding_idx is not None:
-                module.weight.data[module.padding_idx].zero_()
-        elif isinstance(module, nn.LayerNorm):
-            module.bias.data.zero_()
-            module.weight.data.fill_(1.0)
 
 
 class Rebind(nn.Module):
@@ -146,47 +101,6 @@ class HoloLayer(nn.Module):
         return x
 
 
-class FullHoloLayer(nn.Module):
-    def __init__(self, model_dims, gain_init=1., is_causal=True):
-        super().__init__()
-        self.queries = nn.Linear(model_dims, model_dims, bias=False)
-        self.keys = nn.Linear(model_dims, model_dims, bias=False)
-        self.values = nn.Linear(model_dims, model_dims, bias=False)
-
-        self.transform_source = nn.Linear(model_dims, model_dims, bias=False)
-        self.transform_target = nn.Linear(model_dims, model_dims, bias=False)
-        self.ff_net = nn.Sequential(
-            nn.Linear(2 * model_dims, 4 * model_dims),
-            nn.ReLU(),
-            nn.Linear(4 * model_dims, 2 * model_dims),
-        )
-        self.is_causal = is_causal
-
-    def forward(self, x, mask=None, labels=None):
-        x_hat = hrr.fft(x)
-        # self attention
-        q = self.queries(x)
-        k = hrr.fft(self.keys(x))
-        v = hrr.fft(self.values(x))
-        attention_values = hrr.fft(hrr.inverse(q)) * k * v
-        if self.is_causal:
-            attention_values = attention_values.cumsum(-2)
-        else:
-            attention_values = attention_values.sum(-2, keepdim=True)
-
-        x_hat = x_hat + attention_values
-        # MLP transform
-        source = self.transform_source(x)
-        source_inv = hrr.fft(hrr.inverse(source))
-        source = hrr.fft(source)
-        target = hrr.fft(self.transform_target(x))
-        t_args = source_inv * x_hat
-        transformed = hrr.wrap_real_transform(self.ff_net, t_args)
-        x_hat = x_hat + target * transformed - source * t_args
-
-        return torch.real(hrr.ifft(x))
-
-
 class HoloDecoder(PreTrainedModel):
     config_class = HFHoloConfig
 
@@ -234,10 +148,11 @@ class HFHolo(PreTrainedModel):
         self.position_embedding.weight.data.copy_(
             hrr.init(self.position_embedding.weight.shape),
         )
-        self.predict_token = nn.Linear(config.model_dims, config.vocab_size, bias=False)
-        self.predict_token.weight.data.copy_(
-            hrr.init(self.predict_token.weight.shape),
-        )
+        # self.predict_token = nn.Linear(config.model_dims, config.vocab_size, bias=False)
+        # self.predict_token.weight.data.copy_(
+        #     hrr.init(self.predict_token.weight.shape),
+        # )
+        self.predict_token = mup.MuReadout(config.model_dims, config.vocab_size, bias=False)
         self.register_buffer('result_vector', hrr.init((config.model_dims,)).contiguous())
         self.cleanup_kv = CleanUpKV(config.model_dims)
 
@@ -249,7 +164,32 @@ class HFHolo(PreTrainedModel):
         if freeze_list:
             list(map(lambda x: x.requires_grad_(False), freeze_list))
 
-        # self.post_init()
+        self.post_init()
+
+    def _init_weights(self, module):
+        module.apply(self._init_module)
+
+    def _init_module(self, module, readout_zero_init=False):
+        initializer_range = 1. / self.config.model_dims
+
+        if isinstance(module, mup.MuReadout) and readout_zero_init:
+            module.weight.data.zero_()
+        elif isinstance(module, (nn.Linear, nn.Conv1d)):
+            # Slightly different from the TF version which uses truncated_normal for initialization
+            # cf https://github.com/pytorch/pytorch/pull/5617
+            if hasattr(module.weight, 'infshape'):
+                mup.init.normal_(module.weight, mean=0.0, std=initializer_range)
+            else:
+                module.weight.data.normal_(mean=0.0, std=initializer_range)
+            if module.bias is not None:
+                module.bias.data.zero_()
+        elif isinstance(module, nn.Embedding):
+            module.weight.data.normal_(mean=0.0, std=initializer_range)
+            if module.padding_idx is not None:
+                module.weight.data[module.padding_idx].zero_()
+        elif isinstance(module, nn.LayerNorm):
+            module.bias.data.zero_()
+            module.weight.data.fill_(1.0)
 
     def forward(
         self,
@@ -285,8 +225,8 @@ class HFHolo(PreTrainedModel):
 
         loss = 0.
         if labels is not None:
-            preds = logits[:, :-1].view(-1, logits.shape[-1]).contiguous()
-            targets = labels[:, 1:].view(-1).contiguous()
+            preds = logits[:, :-1].contiguous().view(-1, logits.shape[-1])
+            targets = labels[:, 1:].contiguous().view(-1)
             loss = F.cross_entropy(preds, targets)
 
             # logit_loss = logits.square().sum() * 0.01  # + logits.abs().sum() * 0.01
@@ -361,6 +301,24 @@ class HFHolo(PreTrainedModel):
         )
 
         return model_inputs
+
+    @classmethod
+    def mup_base_shapes(cls, filename=None):
+        if not hasattr(cls, '_mup_base_shapes'):
+            print('getting muP base shapes')
+            base_config = HFHoloConfig(
+                hidden_size=128,
+                num_hidden_layers=2,
+            )
+            delta_config = HFHoloConfig(
+                hidden_size=256,
+                num_hidden_layers=2,
+            )
+            base_model = HFHolo(config=base_config)
+            delta_model = HFHolo(config=delta_config)
+            base_shapes = mup.make_base_shapes(base_model, delta_model, savefile=filename)
+            cls._mup_base_shapes = base_shapes
+        return cls._mup_base_shapes
 
 
 class CleanupBlock(nn.Module):
