@@ -526,7 +526,7 @@ def main():
                 # Depending on the model and config, logits may contain extra tensors,
                 # like past_key_values, but logits always come first
                 logits = logits[0]
-            return logits.argmax(dim=-1)
+            return logits.argmax(dim=-1).to('cpu')
 
         metric = load_metric("accuracy")
 
@@ -564,11 +564,11 @@ def main():
 
         return model
 
+    training_args.lr_scheduler_type = 'constant'
 
     search_trainer = MuPTrainer(
         model=None,
         model_init=model_init,
-        lr_scheduler_type='constant',
         # optimizers=(optimizer, None),
         args=training_args,
         train_dataset=train_dataset,
@@ -577,9 +577,7 @@ def main():
         # Data collator will default to DataCollatorWithPadding, so we change it.
         data_collator=default_data_collator,
         compute_metrics=compute_metrics,
-        preprocess_logits_for_metrics=preprocess_logits_for_metrics
-        if training_args.do_eval and not is_torch_tpu_available()
-        else None,
+        preprocess_logits_for_metrics=preprocess_logits_for_metrics,
     )
 
     def wandb_hp_space(trial):
@@ -587,11 +585,11 @@ def main():
             "method": "random",
             "metric": {"name": "objective", "goal": "minimize"},
             "parameters": {
-                "learning_rate": {"distribution": "uniform", "min": 1e-6, "max": 1e-2},
+                "learning_rate": {"distribution": "uniform", "min": 1e-6, "max": 1e-3},
             },
         }
 
-    search_result = search_trainer.hyperparameter_search(
+    best_run = search_trainer.hyperparameter_search(
         direction="maximize",
         backend="wandb",
         hp_space=wandb_hp_space,
@@ -600,9 +598,12 @@ def main():
     )
 
     print('SEARCH COMPLETE')
-    print(search_result)
+    if best_run is None:
+        print('No best run?')
+        return
+    
+    print(best_run)
 
-    metrics = search_result.metrics
 
     max_train_samples = (
         data_args.max_train_samples if data_args.max_train_samples is not None else len(train_dataset)
@@ -612,6 +613,8 @@ def main():
     trainer.log_metrics("train", metrics)
     trainer.save_metrics("train", metrics)
 
+    print('TRAINING MODEL WITH HYPERPARAMETERS')
+    print(best_run.hyperparameters)
     # Train target model with optimal hyperparams from the search
     if model_args.model_name_or_path:
         model = AutoModelForCausalLM.from_pretrained(
@@ -634,7 +637,7 @@ def main():
     mup_base_shapes = MuPTrainer.mup_base_shapes()
     mup.set_base_shapes(model, mup_base_shapes)
     model.apply(model._init_weights)
-    optimizer = mup.MuAdamW(model.parameters(), lr=training_args.learning_rate)
+    optimizer = mup.MuAdamW(model.parameters(), lr=best_run.hyperparameters['learning_rate'])
     print('...done')
     # end muP
 

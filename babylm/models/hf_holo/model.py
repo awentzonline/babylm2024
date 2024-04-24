@@ -26,7 +26,7 @@ class RRSelfAttention(nn.Module):
         v = self.values(x)
         kvt = k * v
         if causal:
-            denom = torch.sqrt(torch.arange(1, x.shape[-2] + 1))[None, ..., None]
+            denom = torch.sqrt(torch.arange(1, x.shape[-2] + 1, device=x.device))[None, ..., None]
             kvt = kvt.cumsum(-2) / denom
         else:
             kvt = kvt.sum(-2, keepdim=True) / torch.sqrt(x.shape[-2])
@@ -308,16 +308,19 @@ class HFHolo(PreTrainedModel):
             print('getting muP base shapes')
             base_config = HFHoloConfig(
                 hidden_size=128,
-                num_hidden_layers=2,
+            #    num_hidden_layers=2,
             )
             delta_config = HFHoloConfig(
                 hidden_size=256,
-                num_hidden_layers=2,
+            #    num_hidden_layers=2,
             )
             base_model = HFHolo(config=base_config)
             delta_model = HFHolo(config=delta_config)
             base_shapes = mup.make_base_shapes(base_model, delta_model, savefile=filename)
             cls._mup_base_shapes = base_shapes
+            del base_model
+            del delta_model
+            base_model = delta_model = None
         return cls._mup_base_shapes
 
 
