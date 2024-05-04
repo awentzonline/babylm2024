@@ -34,6 +34,7 @@ from typing import Optional
 
 import datasets
 from datasets import load_dataset, load_metric
+import mup
 
 import babylm.models  # HACK: register my models
 
@@ -389,7 +390,10 @@ def main():
     else:
         model = AutoModelForCausalLM.from_config(config)
         n_params = sum(dict((p.data_ptr(), p.numel()) for p in model.parameters()).values())
+        base_shapes = model.mup_base_shapes()
+        mup.set_base_shapes(model, base_shapes)
         logger.info(f"Training new model from scratch - Total size={n_params/2**20:.2f}M params")
+
 
     model.resize_token_embeddings(len(tokenizer))
 

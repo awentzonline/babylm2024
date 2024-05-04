@@ -9,11 +9,11 @@ from torch.distributions import Normal
 
 
 def fft(x):
-    return torch.fft.fft(x, norm=None)
+    return torch.fft.rfft(x, norm='ortho')
 
 
 def ifft(x):
-    return torch.fft.ifft(x, norm=None)
+    return torch.fft.irfft(x, norm='ortho')
 
 
 def bind(a, b):
@@ -75,7 +75,8 @@ def key_value_query(
     k: torch.Tensor, v: torch.Tensor, q: torch.Tensor,
     causal: bool = True, norm: bool = False
 ):
-    k, v, inv_q = fft(k), fft(v), inverse(fft(q))
+    #k, v, inv_q = fft(k), fft(v), inverse(fft(q))
+    k, v, inv_q = fft(k), fft(v), fft(q)
     if norm:
         eps = 1e-8
         k = k / (torch.norm(k, dim=-1, keepdim=True) + eps)
@@ -83,11 +84,15 @@ def key_value_query(
         inv_q = inv_q / (torch.norm(inv_q, dim=-1, keepdim=True) + eps)
     kv = torch.multiply(k, v)
     if causal:
-        r = kv.cumsum(dim=-2)
+        r = kv.cumsum(dim=-2) #* kv.shape[-1] / kv.shape[-2]
     else:
         r = kv.sum(dim=-2, keepdim=True)
     # unbind values for each query
     qv = torch.real(ifft(torch.multiply(r, inv_q)))
+    # if norm:
+    #     eps = 1e-8
+    #     qv = qv / (torch.norm(qv, dim=-1, keepdim=True) + eps)
+
     return qv
 
 

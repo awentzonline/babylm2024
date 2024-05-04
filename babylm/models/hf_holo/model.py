@@ -19,6 +19,10 @@ class RRSelfAttention(nn.Module):
         self.queries = nn.Linear(model_dims, model_dims, bias=False)
         self.keys = nn.Linear(model_dims, model_dims, bias=False)
         self.values = nn.Linear(model_dims, model_dims, bias=False)
+        self.output = nn.Linear(model_dims, model_dims, bias=False)
+
+        self.kvt = nn.Identity()
+        self.vhat = nn.Identity()
 
     def forward(self, x, causal=True, mask=None):
         q = self.queries(x)
@@ -26,12 +30,16 @@ class RRSelfAttention(nn.Module):
         v = self.values(x)
         kvt = k * v
         if causal:
-            denom = torch.sqrt(torch.arange(1, x.shape[-2] + 1, device=x.device))[None, ..., None]
-            kvt = kvt.cumsum(-2) / denom
+            # denom = 1 #/ x.shape[-1] #* torch.sqrt(torch.arange(1, x.shape[-2] + 1, device=x.device))[None, ..., None]
+            denom = np.sqrt(x.shape[-1]) / x.shape[-2] #/ torch.arange(1, x.shape[-2] + 1, device=x.device)[None, ..., None]
+            kvt = kvt.cumsum(-2) * denom
         else:
-            kvt = kvt.sum(-2, keepdim=True) / torch.sqrt(x.shape[-2])
+            kvt = kvt.sum(-2, keepdim=True) / x.shape[-1]
+        kvt = self.kvt(kvt)
         values_hat = q * kvt
-        return values_hat
+        values_hat = self.vhat(values_hat)
+        # values_hat = values_hat / (torch.linalg.norm(values_hat, dim=-1, keepdim=True) + 1e-9)
+        return self.output(values_hat)
 
 
 class HRRSelfAttention(nn.Module):
@@ -41,13 +49,26 @@ class HRRSelfAttention(nn.Module):
         self.queries = nn.Linear(model_dims, model_dims, bias=False)
         self.keys = nn.Linear(model_dims, model_dims, bias=False)
         self.values = nn.Linear(model_dims, model_dims, bias=False)
+        self.output = nn.Linear(model_dims, model_dims, bias=False)
+
+        self.precum = nn.Identity()
+        self.postcum = nn.Identity()
 
     def forward(self, x, causal=True, mask=None):
         q = self.queries(x)
         k = self.keys(x)
         v = self.values(x)
-        values_hat = hrr.key_value_query(k, v, q, causal=True, norm=True)
-        return values_hat
+        # k, v, inv_q = hrr.fft(k), hrr.fft(v), hrr.fft(q)
+        # kv = hrr.bind(k, v)
+        # kvt = self.precum(kv)
+        # kvt = self.kvt(kv.cumsum(-2))
+        # kvt = self.postcum(kvt)
+        # values_hat = hrr.unbind(kvt, q)
+        values_hat = hrr.key_value_query(k, v, q, causal=causal, norm=False)
+        # values_hat = hrr.unit_projection(values_hat)
+        # values_hat = values_hat / (2 * v.shape[-1] ** 2)
+        # return values_hat
+        return self.output(values_hat)
 
 
 class Rebind(nn.Module):
@@ -85,7 +106,7 @@ class Transform(nn.Module):
 
 
 class HoloLayer(nn.Module):
-    def __init__(self, model_dims, gain_init=1., attention_class=RRSelfAttention):
+    def __init__(self, model_dims, gain_init=1., attention_class=HRRSelfAttention):
         super().__init__()
         self.self_attention = attention_class(model_dims)
         self.rebind = Rebind(model_dims)
@@ -94,7 +115,7 @@ class HoloLayer(nn.Module):
         self.gain = nn.Parameter(torch.full((1,), gain_init))
 
     def forward(self, x, mask=None, labels=None):
-        values_hat = self.self_attention(x)
+        values_hat = self.self_attention(x, causal=True)
         x = x + values_hat
         # x = self.rebind(x)
         # x = self.transform(x)
@@ -118,7 +139,7 @@ class HoloDecoder(PreTrainedModel):
         ])
 
     def forward(self, x, mask=None, labels=None):
-        loss = 0.
+        loss = torch.tensor(0., device=x.device)
 
         for layer in self.layers:
             x = layer(x, mask=mask)
@@ -142,19 +163,21 @@ class HFHolo(PreTrainedModel):
         self.decoder = HoloDecoder(config)
         self.position_embedding = nn.Embedding(config.max_seq_len, config.model_dims)
         self.input_embedding = nn.Embedding(config.vocab_size, config.model_dims)
-        self.input_embedding.weight.data.copy_(
-            hrr.init(self.input_embedding.weight.shape),
-        )
-        self.position_embedding.weight.data.copy_(
-            hrr.init(self.position_embedding.weight.shape),
-        )
+        # if config.attention_class == 'hrr':
+        #     self.input_embedding.weight.data.copy_(
+        #         hrr.init(self.input_embedding.weight.shape),
+        #     )
+        #     self.position_embedding.weight.data.copy_(
+        #         hrr.init(self.position_embedding.weight.shape),
+        #     )
         # self.predict_token = nn.Linear(config.model_dims, config.vocab_size, bias=False)
         # self.predict_token.weight.data.copy_(
         #     hrr.init(self.predict_token.weight.shape),
         # )
         self.predict_token = mup.MuReadout(config.model_dims, config.vocab_size, bias=False)
-        self.register_buffer('result_vector', hrr.init((config.model_dims,)).contiguous())
-        self.cleanup_kv = CleanUpKV(config.model_dims)
+        # self.register_buffer('result_vector', hrr.init((config.model_dims,)).contiguous())
+        # self.cleanup_kv = CleanUpKV(config.model_dims)
+        # self.fuck = nn.Linear(config.model_dims, config.model_dims, bias=False)
 
         freeze_list = []
         if not config.learn_input_embs:
@@ -169,27 +192,37 @@ class HFHolo(PreTrainedModel):
     def _init_weights(self, module):
         module.apply(self._init_module)
 
-    def _init_module(self, module, readout_zero_init=False):
-        initializer_range = 1. / self.config.model_dims
-
+    def _init_module(self, module, readout_zero_init=False, query_zero_init=False):
         if isinstance(module, mup.MuReadout) and readout_zero_init:
             module.weight.data.zero_()
         elif isinstance(module, (nn.Linear, nn.Conv1d)):
             # Slightly different from the TF version which uses truncated_normal for initialization
             # cf https://github.com/pytorch/pytorch/pull/5617
+
             if hasattr(module.weight, 'infshape'):
-                mup.init.normal_(module.weight, mean=0.0, std=initializer_range)
+                mup.init.normal_(module.weight, mean=0.0, std=self.config.initializer_range)
             else:
-                module.weight.data.normal_(mean=0.0, std=initializer_range)
+                module.weight.data.normal_(mean=0.0, std=self.config.initializer_range)
             if module.bias is not None:
                 module.bias.data.zero_()
         elif isinstance(module, nn.Embedding):
-            module.weight.data.normal_(mean=0.0, std=initializer_range)
+            # if self.config.attention_class == 'hrr':
+            #     module.weight.data.copy_(
+            #         hrr.init(module.weight.shape),
+            #     )
+            module.weight.data.normal_(mean=0.0, std=self.config.initializer_range)
             if module.padding_idx is not None:
                 module.weight.data[module.padding_idx].zero_()
         elif isinstance(module, nn.LayerNorm):
             module.bias.data.zero_()
             module.weight.data.fill_(1.0)
+
+        for name, module in module.named_modules():
+            for target_name in ('queries',):
+                if target_name in name and query_zero_init:
+                    module.weight.data.zero_()
+                    if module.bias is not None:
+                        module.bias.data.zero_()
 
     def forward(
         self,
@@ -212,15 +245,21 @@ class HFHolo(PreTrainedModel):
         position_ids = torch.arange(tokens.shape[1]).long().to(tokens.device)
         position_ids = position_ids[None, :].repeat(tokens.shape[0], 1)
         positions = self.position_embedding(position_ids)
-        inputs = hrr.bind(tokens, positions)
-        #inputs = tokens + positions
-        feats = self.decoder(inputs, labels=labels)
-        if labels is not None:
-            feats, decoder_loss = feats
+        if self.config.attention_class == 'hrr':
+            inputs = hrr.bind(tokens, positions)
+        else:
+            inputs = tokens + positions
+        feats = self.decoder(inputs, labels=None)
+        # feats = self.decoder(inputs, labels=labels)
+        # feats = F.relu(feats)
+        # feats = tokens #F.relu(tokens) #+ positions
+        # feats = self.fuck(feats)
+        # if labels is not None:
+        #     feats, decoder_loss = feats
 
-        feats = hrr.unbind(feats, self.result_vector)
+        # feats = hrr.unbind(feats, self.result_vector)
         # feats = self.cleanup_kv(feats)
-        feats = feats / (torch.linalg.norm(feats, dim=-1, keepdim=True) + 1e-9)
+        # feats = feats / (torch.linalg.norm(feats, dim=-1, keepdim=True) + 1e-9)
         logits = self.predict_token(feats)
 
         loss = 0.
@@ -303,16 +342,18 @@ class HFHolo(PreTrainedModel):
         return model_inputs
 
     @classmethod
-    def mup_base_shapes(cls, filename=None):
+    def mup_base_shapes(cls, filename=None, base_kwargs=None, delta_kwargs=None):
         if not hasattr(cls, '_mup_base_shapes'):
             print('getting muP base shapes')
+            base_kwargs = base_kwargs or {}
+            delta_kwargs = delta_kwargs or {}
             base_config = HFHoloConfig(
-                hidden_size=128,
-            #    num_hidden_layers=2,
+                model_dims=128,
+                **base_kwargs,
             )
             delta_config = HFHoloConfig(
-                hidden_size=256,
-            #    num_hidden_layers=2,
+                model_dims=256,
+                **delta_kwargs
             )
             base_model = HFHolo(config=base_config)
             delta_model = HFHolo(config=delta_config)
