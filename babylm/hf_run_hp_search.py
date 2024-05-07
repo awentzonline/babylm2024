@@ -583,9 +583,9 @@ def main():
     def wandb_hp_space(trial):
         return {
             "method": "random",
-            "metric": {"name": "objective", "goal": "minimize"},
+            "metric": {"name": "eval/loss", "goal": "minimize"},
             "parameters": {
-                "learning_rate": {"distribution": "uniform", "min": 1e-6, "max": 1e-3},
+                "learning_rate": {"distribution": "uniform", "min": 1e-5, "max": 1e-3},
             },
         }
 
@@ -605,13 +605,14 @@ def main():
     print(best_run)
 
 
-    max_train_samples = (
-        data_args.max_train_samples if data_args.max_train_samples is not None else len(train_dataset)
-    )
-    metrics["train_samples"] = min(max_train_samples, len(train_dataset))
+    # max_train_samples = (
+    #     data_args.max_train_samples if data_args.max_train_samples is not None else len(train_dataset)
+    # )
+    # metrics = {}}
+    # metrics["train_samples"] = min(max_train_samples, len(train_dataset))
 
-    trainer.log_metrics("train", metrics)
-    trainer.save_metrics("train", metrics)
+    # trainer.log_metrics("train", metrics)
+    # trainer.save_metrics("train", metrics)
 
     print('TRAINING MODEL WITH HYPERPARAMETERS')
     print(best_run.hyperparameters)
@@ -626,6 +627,7 @@ def main():
             use_auth_token=True if model_args.use_auth_token else None,
         )
     else:
+        config.model_dims = 1024
         model = AutoModelForCausalLM.from_config(config)
         n_params = sum(dict((p.data_ptr(), p.numel()) for p in model.parameters()).values())
         logger.info(f"Training new model from scratch - Total size={n_params/2**20:.2f}M params")
@@ -634,7 +636,7 @@ def main():
 
     # muP
     print('Performing muP setup')
-    mup_base_shapes = MuPTrainer.mup_base_shapes()
+    mup_base_shapes = model.mup_base_shapes()
     mup.set_base_shapes(model, mup_base_shapes)
     model.apply(model._init_weights)
     optimizer = mup.MuAdamW(model.parameters(), lr=best_run.hyperparameters['learning_rate'])
