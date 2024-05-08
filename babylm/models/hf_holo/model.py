@@ -217,12 +217,19 @@ class HFHolo(PreTrainedModel):
             module.bias.data.zero_()
             module.weight.data.fill_(1.0)
 
+        depth_std = self.config.initializer_range / np.sqrt(2 * self.config.num_hidden_layers)
         for name, module in module.named_modules():
             for target_name in ('queries',):
                 if target_name in name and query_zero_init:
                     module.weight.data.zero_()
                     if module.bias is not None:
                         module.bias.data.zero_()
+
+            if "output" in name:
+                if hasattr(module.weight, 'infshape'):
+                    mup.init.normal_(module.weight, mean=0.0, std=depth_std)
+                else:
+                    module.weight.data.normal_(mean=0.0, std=depth_std)
 
     def forward(
         self,
