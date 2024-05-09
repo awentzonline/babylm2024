@@ -105,17 +105,32 @@ class Transform(nn.Module):
         return x
 
 
+class MLP(nn.Module):
+    def __init__(self, model_dims, ff_dims=None):
+        super().__init__()
+        ff_dims = ff_dims or model_dims * 4
+        self.net = nn.Sequential(
+            nn.Linear(model_dims, ff_dims),
+            nn.GELU(),
+            nn.Linear(ff_dims, model_dims),
+        )
+
+    def forward(self, x):
+        return self.net(x)
+
+
 class HoloLayer(nn.Module):
     def __init__(self, model_dims, gain_init=1., attention_class=HRRSelfAttention):
         super().__init__()
         self.self_attention = attention_class(model_dims)
-        self.rebind = Rebind(model_dims)
-        self.transform = Transform(model_dims)
-
+        # self.rebind = Rebind(model_dims)
+        # self.transform = Transform(model_dims)
+        self.mlp = MLP(model_dims)
         self.gain = nn.Parameter(torch.full((1,), gain_init))
 
     def forward(self, x, mask=None, labels=None):
         values_hat = self.self_attention(x, causal=True)
+        values_hat = self.mlp(values_hat)
         x = x + values_hat
         # x = self.rebind(x)
         # x = self.transform(x)
