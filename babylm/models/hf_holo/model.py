@@ -71,6 +71,34 @@ class HRRSelfAttention(nn.Module):
         return self.output(values_hat)
 
 
+class RedundantHRRSelfAttention(nn.Module):
+    """
+    Use the mean of mutiple permuted copies of the data to reduce noise in the representation.
+    Associative Long Short-Term Memory: https://arxiv.org/pdf/1602.03032v2
+    """
+    def __init__(self, model_dims, num_copies=10):
+        super().__init__()
+        self.model_dims = model_dims
+        self.queries = nn.Linear(model_dims, model_dims, bias=False)
+        self.keys = nn.Linear(model_dims, model_dims, bias=False)
+        self.values = nn.Linear(model_dims, model_dims, bias=False)
+        self.output = nn.Linear(model_dims, model_dims, bias=False)
+        self.num_copies = num_copies
+        self.register_buffer('permutations', torch.randn(num_copies, model_dims).argsort(-1))
+
+    def forward(self, x, causal=True, mask=None):
+        q = self.queries(x)
+        k = self.keys(x)
+        v = self.values(x)
+        q = q[..., self.permutations].permute(-2, 0, 1, -1)
+        k = k[..., self.permutations].permute(-2, 0, 1, -1)
+        v = v[None, ...]
+        values_hat = hrr.key_value_query(k, v, q, causal=causal)
+        values_hat = values_hat.mean(0)
+        values_hat = self.output(values_hat)
+        return values_hat
+
+
 class Rebind(nn.Module):
     def __init__(self, model_dims):
         super().__init__()
