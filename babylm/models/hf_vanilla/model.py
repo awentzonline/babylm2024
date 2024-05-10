@@ -55,6 +55,7 @@ class VanLayer(nn.Module):
     def __init__(self, model_dims, heads, dropout=0.1):
         super().__init__()
         self.norm_pre_attention = nn.LayerNorm(model_dims)
+        self.norm_ff = nn.LayerNorm(model_dims)
         self.attention = VanAttention(model_dims, heads)
         self.ff_net = nn.Sequential(
             # nn.LayerNorm(model_dims),
@@ -65,10 +66,10 @@ class VanLayer(nn.Module):
         )
 
     def forward(self, x, labels=None, mask=None):
-        normed_x = x  # self.norm_pre_attention(x)
+        normed_x = self.norm_pre_attention(x)
         attended = self.attention(normed_x, normed_x, normed_x, mask=mask)
         x = x + attended
-        ffed = self.ff_net(x)
+        ffed = self.ff_net(self.norm_ff(x))
         return x + ffed
 
 
@@ -87,8 +88,8 @@ class VanDecoder(PreTrainedModel):
         for layer in self.layers:
             x = layer(x, mask=mask)
             # print(list(map(float, (x.min(), x.mean(), x.max()))))
-        #return self.final_norm(x)
-        return x
+        return self.final_norm(x)
+        #return x
 
 
 class HFVan(PreTrainedModel):
@@ -156,7 +157,9 @@ class HFVan(PreTrainedModel):
 
         loss = None
         if labels is not None:
-            loss = F.cross_entropy(logits[:, :-1].transpose(-1, -2), labels[:, 1:])
+            preds = logits[:, :-1].contiguous().view(-1, logits.shape[-1])
+            targets = labels[:, 1:].contiguous().view(-1)
+            loss = F.cross_entropy(preds, targets)
 
         if return_dict is not None and not return_dict:
             output = (logits, feats)

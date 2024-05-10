@@ -8,9 +8,10 @@ class HFVanConfig(PretrainedConfig):
         self,
         vocab_size: int = 50_257,
         model_dims: int = 128,
-        num_hidden_layers: int = 2,
+        num_hidden_layers: int = 1,
         heads: int = 8,
         max_seq_length: int = 1024,
+        use_norm: bool = False,
         **kwargs
     ):
         self.vocab_size = vocab_size
@@ -18,6 +19,7 @@ class HFVanConfig(PretrainedConfig):
         self.num_hidden_layers = num_hidden_layers
         self.heads = heads
         self.max_seq_length = max_seq_length
+        self.use_norm = use_norm
         super().__init__(**kwargs)
 
 
