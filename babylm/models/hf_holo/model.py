@@ -160,12 +160,14 @@ class HoloLayer(nn.Module):
         # self.transform = Transform(model_dims)
         self.mlp = MLP(model_dims)
         self.gain = nn.Parameter(torch.full((1,), gain_init))
-        self.norm = nn.LayerNorm(model_dims)
+        self.norm_attn = nn.LayerNorm(model_dims)
+        self.norm_mlp = nn.LayerNorm(model_dims)
 
     def forward(self, x, mask=None, labels=None):
-        values_hat = self.self_attention(self.norm(x), causal=True)
-        values_hat = self.mlp(values_hat)
-        x = x + values_hat
+        values_attn = self.self_attention(self.norm_attn(x), causal=True)
+        x = x + values_attn
+        values_mlp = self.mlp(self.norm_mlp(x))
+        x = x + values_mlp
         # x = self.rebind(x)
         # x = self.transform(x)
         return x
@@ -303,7 +305,7 @@ class HFHolo(PreTrainedModel):
         position_ids = torch.arange(tokens.shape[1]).long().to(tokens.device)
         position_ids = position_ids[None, :].repeat(tokens.shape[0], 1)
         positions = self.position_embedding(position_ids)
-        if self.config.attention_class == 'hrr':
+        if self.config.attention_class in ('hrr', 'rhrr'):
             inputs = hrr.bind(tokens, positions)
         else:
             inputs = tokens + positions
