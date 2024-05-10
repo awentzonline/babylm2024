@@ -160,9 +160,10 @@ class HoloLayer(nn.Module):
         # self.transform = Transform(model_dims)
         self.mlp = MLP(model_dims)
         self.gain = nn.Parameter(torch.full((1,), gain_init))
+        self.norm = nn.LayerNorm(model_dims)
 
     def forward(self, x, mask=None, labels=None):
-        values_hat = self.self_attention(x, causal=True)
+        values_hat = self.self_attention(self.norm(x), causal=True)
         values_hat = self.mlp(values_hat)
         x = x + values_hat
         # x = self.rebind(x)
@@ -223,6 +224,7 @@ class HFHolo(PreTrainedModel):
         # self.predict_token.weight.data.copy_(
         #     hrr.init(self.predict_token.weight.shape),
         # )
+        self.norm = nn.LayerNorm(model_dims)
         self.predict_token = mup.MuReadout(config.model_dims, config.vocab_size, bias=False)
         # self.register_buffer('result_vector', hrr.init((config.model_dims,)).contiguous())
         # self.cleanup_kv = CleanUpKV(config.model_dims)
@@ -306,6 +308,7 @@ class HFHolo(PreTrainedModel):
         else:
             inputs = tokens + positions
         feats = self.decoder(inputs, labels=None)
+        feats = self.norm(feats)
         # feats = self.decoder(inputs, labels=labels)
         # feats = F.relu(feats)
         # feats = tokens #F.relu(tokens) #+ positions
