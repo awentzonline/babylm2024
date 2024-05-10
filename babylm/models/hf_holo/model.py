@@ -226,7 +226,7 @@ class HFHolo(PreTrainedModel):
         # self.predict_token.weight.data.copy_(
         #     hrr.init(self.predict_token.weight.shape),
         # )
-        self.norm = nn.LayerNorm(model_dims)
+        self.norm = nn.LayerNorm(config.model_dims)
         self.predict_token = mup.MuReadout(config.model_dims, config.vocab_size, bias=False)
         # self.register_buffer('result_vector', hrr.init((config.model_dims,)).contiguous())
         # self.cleanup_kv = CleanUpKV(config.model_dims)
