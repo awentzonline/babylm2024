@@ -76,7 +76,7 @@ class RedundantHRRSelfAttention(nn.Module):
     Use the mean of mutiple permuted copies of the data to reduce noise in the representation.
     Associative Long Short-Term Memory: https://arxiv.org/pdf/1602.03032v2
     """
-    def __init__(self, model_dims, num_copies=10):
+    def __init__(self, model_dims, num_copies=10, perm_freq=True):
         super().__init__()
         self.model_dims = model_dims
         self.queries = nn.Linear(model_dims, model_dims, bias=False)
@@ -84,17 +84,22 @@ class RedundantHRRSelfAttention(nn.Module):
         self.values = nn.Linear(model_dims, model_dims, bias=False)
         self.output = nn.Linear(model_dims, model_dims, bias=False)
         self.num_copies = num_copies
-        self.register_buffer('permutations', torch.randn(num_copies, model_dims).argsort(-1))
+        self.perm_freq = perm_freq
+        num_perms = model_dims // 2 + 1 if perm_freq else model_dims
+        self.register_buffer('permutations', torch.randn(num_copies, num_perms).argsort(-1))
 
     def forward(self, x, causal=True, mask=None):
         q = self.queries(x)
         k = self.keys(x)
         v = self.values(x)
-        q = q[..., self.permutations].permute(-2, 0, 1, -1)
-        k = k[..., self.permutations].permute(-2, 0, 1, -1)
-        v = v[None, ...]
-        values_hat = hrr.key_value_query(k, v, q, causal=causal)
-        values_hat = values_hat.mean(0)
+        if self.perm_freq:
+            values_hat = hrr.perm_key_value_query(k, v, q, self.permutations, causal=causal)
+        else:
+            q = q[..., self.permutations].permute(2, 0, 1, 3)
+            k = k[..., self.permutations].permute(2, 0, 1, 3)
+            v = v[None, ...]
+            values_hat = hrr.key_value_query(k, v, q, causal=causal)
+            values_hat = values_hat.mean(0)
         values_hat = self.output(values_hat)
         return values_hat
 
@@ -174,6 +179,7 @@ class HoloDecoder(PreTrainedModel):
         attention_class = dict(
             rr=RRSelfAttention,
             hrr=HRRSelfAttention,
+            rhrr=RedundantHRRSelfAttention,
         )[config.attention_class]
 
         self.layers = nn.ModuleList([
