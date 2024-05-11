@@ -153,23 +153,25 @@ class MLP(nn.Module):
 
 
 class HoloLayer(nn.Module):
-    def __init__(self, model_dims, gain_init=1., attention_class=HRRSelfAttention):
+    def __init__(self, model_dims, rezero=False, attention_class=HRRSelfAttention):
         super().__init__()
         self.self_attention = attention_class(model_dims)
-        # self.rebind = Rebind(model_dims)
-        # self.transform = Transform(model_dims)
         self.mlp = MLP(model_dims)
-        self.gain = nn.Parameter(torch.full((1,), gain_init))
-        self.norm_attn = nn.LayerNorm(model_dims)
-        self.norm_mlp = nn.LayerNorm(model_dims)
+
+        if rezero:
+            self.norm_attn = nn.Identity()
+            self.norm_mlp = nn.Identity()
+            self.gain = nn.Parameter(torch.zeros(1))
+        else:
+            self.norm_attn = nn.LayerNorm(model_dims)
+            self.norm_mlp = nn.LayerNorm(model_dims)
+            self.gain = 1.
 
     def forward(self, x, mask=None, labels=None):
         values_attn = self.self_attention(self.norm_attn(x), causal=True)
-        x = x + values_attn
+        x = x + self.gain * values_attn
         values_mlp = self.mlp(self.norm_mlp(x))
-        x = x + values_mlp
-        # x = self.rebind(x)
-        # x = self.transform(x)
+        x = x + self.gain * values_mlp
         return x
 
 
@@ -186,7 +188,10 @@ class HoloDecoder(PreTrainedModel):
         )[config.attention_class]
 
         self.layers = nn.ModuleList([
-            layer_class(config.model_dims, attention_class=attention_class)
+            layer_class(
+                config.model_dims, attention_class=attention_class,
+                rezero=config.rezero,
+            )
             for _ in range(config.num_hidden_layers)
         ])
 
@@ -226,7 +231,11 @@ class HFHolo(PreTrainedModel):
         # self.predict_token.weight.data.copy_(
         #     hrr.init(self.predict_token.weight.shape),
         # )
-        self.norm = nn.LayerNorm(config.model_dims)
+        if config.rezero:
+            self.norm = nn.Identity()
+        else:
+            self.norm = nn.LayerNorm(config.model_dims)
+
         self.predict_token = mup.MuReadout(config.model_dims, config.vocab_size, bias=False)
         # self.register_buffer('result_vector', hrr.init((config.model_dims,)).contiguous())
         # self.cleanup_kv = CleanUpKV(config.model_dims)

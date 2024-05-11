@@ -14,6 +14,7 @@ class HFHoloConfig(PretrainedConfig):
         learn_output_embs: bool = True,
         attention_class: str = 'hrr',
         initializer_range: float = 0.02,
+        rezero: bool = False,
         **kwargs
     ):
         self.vocab_size = vocab_size
@@ -24,6 +25,7 @@ class HFHoloConfig(PretrainedConfig):
         self.learn_output_embs = learn_output_embs
         self.attention_class = attention_class
         self.initializer_range = initializer_range
+        self.rezero = rezero
         super().__init__(**kwargs)
 
 
