@@ -26,6 +26,7 @@ from typing import Tuple
 import torch
 from accelerate import PartialState
 from accelerate.utils import set_seed
+import mup
 
 from babylm.models import HFHolo, HFVan  # HACK: register my models
 
@@ -358,6 +359,11 @@ def main():
     if tokenizer.pad_token is None:
         tokenizer.pad_token = tokenizer.eos_token
     model = model_class.from_pretrained(args.model_name_or_path)
+
+    if hasattr(model, 'mup_base_shapes'):
+        print('Setting muP shapes')
+        base_shapes = model.mup_base_shapes()
+        mup.set_base_shapes(model, base_shapes)
 
     # Set the model to the right device
     model.to(distributed_state.device)

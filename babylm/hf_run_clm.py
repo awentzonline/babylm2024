@@ -124,6 +124,14 @@ class ModelArguments:
             )
         },
     )
+    no_mup: bool = field(
+        default=False,
+        metadata={
+            "help": (
+                "Don't use maximal update parameterization"
+            )
+        },
+    )
 
     def __post_init__(self):
         if self.config_overrides is not None and (self.config_name is not None or self.model_name_or_path is not None):
@@ -390,8 +398,10 @@ def main():
     else:
         model = AutoModelForCausalLM.from_config(config)
         n_params = sum(dict((p.data_ptr(), p.numel()) for p in model.parameters()).values())
-        base_shapes = model.mup_base_shapes()
-        mup.set_base_shapes(model, base_shapes)
+        if not model_args.no_mup:
+            print('Setting muP base shapes')
+            base_shapes = model.mup_base_shapes()
+            mup.set_base_shapes(model, base_shapes)
         logger.info(f"Training new model from scratch - Total size={n_params/2**20:.2f}M params")
 
 
