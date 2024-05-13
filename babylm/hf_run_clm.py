@@ -202,6 +202,12 @@ class DataTrainingArguments:
     keep_linebreaks: bool = field(
         default=True, metadata={"help": "Whether to keep line breaks when using TXT files or not."}
     )
+    stream_dataset: bool = field(
+        default=False,
+        metadata={
+            "help": "Use streaming dataset loading"
+        }
+    )
 
     def __post_init__(self):
         if self.dataset_name is None and self.train_file is None and self.validation_file is None:
@@ -287,6 +293,7 @@ def main():
             data_args.dataset_config_name,
             cache_dir=model_args.cache_dir,
             use_auth_token=True if model_args.use_auth_token else None,
+            streaming=data_args.stream_dataset,
         )
         if "validation" not in raw_datasets.keys():
             raw_datasets["validation"] = load_dataset(
@@ -295,6 +302,7 @@ def main():
                 split=f"train[:{data_args.validation_split_percentage}%]",
                 cache_dir=model_args.cache_dir,
                 use_auth_token=True if model_args.use_auth_token else None,
+                streaming=data_args.stream_dataset,
             )
             raw_datasets["train"] = load_dataset(
                 data_args.dataset_name,
@@ -302,6 +310,7 @@ def main():
                 split=f"train[{data_args.validation_split_percentage}%:]",
                 cache_dir=model_args.cache_dir,
                 use_auth_token=True if model_args.use_auth_token else None,
+                streaming=data_args.stream_dataset,
             )
     else:
         data_files = {}
@@ -323,6 +332,7 @@ def main():
             data_files=data_files,
             cache_dir=model_args.cache_dir,
             use_auth_token=True if model_args.use_auth_token else None,
+            streaming=data_args.stream_dataset,
             **dataset_args,
         )
         # If no validation data is there, validation_split_percentage will be used to divide the dataset.
@@ -333,6 +343,7 @@ def main():
                 split=f"train[:{data_args.validation_split_percentage}%]",
                 cache_dir=model_args.cache_dir,
                 use_auth_token=True if model_args.use_auth_token else None,
+                streaming=data_args.stream_dataset,
                 **dataset_args,
             )
             raw_datasets["train"] = load_dataset(
@@ -341,6 +352,7 @@ def main():
                 split=f"train[{data_args.validation_split_percentage}%:]",
                 cache_dir=model_args.cache_dir,
                 use_auth_token=True if model_args.use_auth_token else None,
+                streaming=data_args.stream_dataset,
                 **dataset_args,
             )
 
