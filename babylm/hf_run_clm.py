@@ -57,6 +57,8 @@ from transformers.trainer_utils import get_last_checkpoint
 from transformers.utils import check_min_version, send_example_telemetry
 from transformers.utils.versions import require_version
 
+from .hf_mup_trainer import MuPTrainer
+
 
 # Will error if the minimal version of Transformers is not installed. Remove at your own risks.
 check_min_version("4.21.0.dev0")
@@ -534,7 +536,7 @@ def main():
             return metric.compute(predictions=preds, references=labels)
 
     # Initialize our Trainer
-    trainer = Trainer(
+    trainer = MuPTrainer(
         model=model,
         args=training_args,
         train_dataset=train_dataset if training_args.do_train else None,

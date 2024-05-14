@@ -57,6 +57,8 @@ from transformers.trainer_utils import get_last_checkpoint
 from transformers.utils import check_min_version, send_example_telemetry
 from transformers.utils.versions import require_version
 
+from .hf_mup_trainer import MuPTrainer
+
 
 # Will error if the minimal version of Transformers is not installed. Remove at your own risks.
 check_min_version("4.21.0.dev0")
@@ -68,52 +70,6 @@ logger = logging.getLogger(__name__)
 
 MODEL_CONFIG_CLASSES = list(MODEL_FOR_CAUSAL_LM_MAPPING.keys())
 MODEL_TYPES = tuple(conf.model_type for conf in MODEL_CONFIG_CLASSES)
-
-
-class MuPTrainer(Trainer):
-    def create_optimizer(self):
-        opt_model = self.model_wrapped if hasattr(self, 'model_wrapped') else self.model
-
-        if self.optimizer is None:
-            decay_parameters = self.get_decay_parameter_names(opt_model)
-            optimizer_grouped_parameters = [
-                {
-                    "params": [
-                        p for n, p in opt_model.named_parameters() if (n in decay_parameters and p.requires_grad)
-                    ],
-                    "weight_decay": self.args.weight_decay,
-                },
-                {
-                    "params": [
-                        p for n, p in opt_model.named_parameters() if (n not in decay_parameters and p.requires_grad)
-                    ],
-                    "weight_decay": 0.0,
-                },
-            ]
-            optim_args = {}
-            if self.args.optim_args:
-                for mapping in self.args.optim_args.replace(" ", "").split(","):
-                    key, value = mapping.split("=")
-                    optim_args[key] = value
-
-            optimizer_kwargs = {"lr": self.args.learning_rate}
-            adam_kwargs = {
-                "betas": (self.args.adam_beta1, self.args.adam_beta2),
-                "eps": self.args.adam_epsilon,
-            }
-            optimizer_cls = mup.MuAdamW
-            # Overwrite `params` in case it's created by `get_optimizer_cls_and_kwargs`
-            # e.g. for GaLore optimizer.
-            if "params" in optimizer_kwargs:
-                optimizer_grouped_parameters = optimizer_kwargs.pop("params")
-
-            # For layer-wise dummy optimizers we overwrite optimizer_grouped_parameters with `optimizer_dict`
-            # to avoid arguments conflicts.
-            if "optimizer_dict" in optimizer_kwargs:
-                optimizer_grouped_parameters = optimizer_kwargs.pop("optimizer_dict")
-
-            self.optimizer = optimizer_cls(optimizer_grouped_parameters, **optimizer_kwargs)
-        return self.optimizer
 
 
 @dataclass
@@ -601,9 +557,8 @@ def main():
     if best_run is None:
         print('No best run?')
         return
-    
-    print(best_run)
 
+    print(best_run)
 
     # max_train_samples = (
     #     data_args.max_train_samples if data_args.max_train_samples is not None else len(train_dataset)
