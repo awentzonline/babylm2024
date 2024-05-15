@@ -249,6 +249,11 @@ class HFHolo(PreTrainedModel):
         if freeze_list:
             list(map(lambda x: x.requires_grad_(False), freeze_list))
 
+        self.loss_fn = {
+            'xent': F.cross_entropy,
+            'focal': focal_loss,
+        }[config.loss]
+
         self.post_init()
 
     def _init_weights(self, module):
@@ -336,7 +341,7 @@ class HFHolo(PreTrainedModel):
         if labels is not None:
             preds = logits[:, :-1].contiguous().view(-1, logits.shape[-1])
             targets = labels[:, 1:].contiguous().view(-1)
-            loss = F.cross_entropy(preds, targets)
+            loss = self.loss_fn(preds, targets)
 
             # logit_loss = logits.square().sum() * 0.01  # + logits.abs().sum() * 0.01
             # loss = loss + logit_loss  # + decoder_loss
@@ -463,6 +468,15 @@ class CleanUpKV(nn.Module):
         # dx = x - values
         # print('kv dx', list(map(float, [dx.min(), dx.mean(), dx.std(), dx.max()])))
         return values
+
+
+def focal_loss(logits, targets, gamma=2.):
+    """Adapted from https://github.com/artemmavrin/focal-loss/blob/master/src/focal_loss/_categorical_focal_loss.py"""
+    probs = torch.softmax(logits, dim=-1)
+    probs = probs[torch.arange(logits.shape[0]), targets]
+    focal_modulation = (1 - probs) ** gamma
+    xent_loss = F.cross_entropy(logits, targets, reduction='none')
+    return torch.mean(focal_modulation * xent_loss)
 
 
 AutoModel.register(HFHoloConfig, HoloDecoder)
