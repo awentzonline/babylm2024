@@ -363,7 +363,7 @@ def main():
     if hasattr(model, 'mup_base_shapes'):
         print('Setting muP shapes')
         base_shapes = model.mup_base_shapes()
-        mup.set_base_shapes(model, base_shapes)
+        mup.set_base_shapes(model, base_shapes, rescale_params=False)
 
     # Set the model to the right device
     model.to(distributed_state.device)
