@@ -557,7 +557,10 @@ def main():
             checkpoint = training_args.resume_from_checkpoint
         elif last_checkpoint is not None:
             checkpoint = last_checkpoint
-        train_result = trainer.train(resume_from_checkpoint=checkpoint)
+        try:
+            train_result = trainer.train(resume_from_checkpoint=checkpoint)
+        except KeyboardInterrupt:
+            print('Interrupting training...')
         trainer.save_model()  # Saves the tokenizer too for easy upload
 
         metrics = train_result.metrics
