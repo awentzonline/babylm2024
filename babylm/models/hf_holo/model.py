@@ -273,7 +273,7 @@ class HFHolo(PreTrainedModel):
             if module.bias is not None:
                 module.bias.data.zero_()
         elif isinstance(module, nn.Embedding):
-            if self.config.attention_class in ('hrr', 'rhrr'):
+            if False and self.config.attention_class in ('hrr', 'rhrr'):
                 module.weight.data.copy_(
                     hrr.init(module.weight.shape),
                 )
