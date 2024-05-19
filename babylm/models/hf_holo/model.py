@@ -124,9 +124,9 @@ class Transform(nn.Module):
         super().__init__()
         self.keys = nn.Linear(model_dims, model_dims, bias=False)
         self.ff_net = nn.Sequential(
-            nn.Linear(2 * model_dims, 4 * model_dims),
+            nn.Linear(2 * model_dims, 4 * model_dims, bias=False),
             nn.ReLU(),
-            nn.Linear(4 * model_dims, 2 * model_dims),
+            nn.Linear(4 * model_dims, 2 * model_dims, bias=False),
         )
 
     def forward(self, x):
@@ -143,9 +143,9 @@ class MLP(nn.Module):
         super().__init__()
         ff_dims = ff_dims or model_dims * 4
         self.net = nn.Sequential(
-            nn.Linear(model_dims, ff_dims),
+            nn.Linear(model_dims, ff_dims, bias=False),
             nn.GELU(),
-            nn.Linear(ff_dims, model_dims),
+            nn.Linear(ff_dims, model_dims, bias=False),
         )
 
     def forward(self, x):
@@ -163,8 +163,8 @@ class HoloLayer(nn.Module):
             self.norm_mlp = nn.Identity()
             self.gain = nn.Parameter(torch.zeros(1))
         else:
-            self.norm_attn = nn.LayerNorm(model_dims)
-            self.norm_mlp = nn.LayerNorm(model_dims)
+            self.norm_attn = nn.LayerNorm(model_dims, bias=False)
+            self.norm_mlp = nn.LayerNorm(model_dims, bias=False)
             self.gain = 1.
 
     def forward(self, x, mask=None, labels=None):
@@ -234,7 +234,7 @@ class HFHolo(PreTrainedModel):
         if config.rezero:
             self.norm = nn.Identity()
         else:
-            self.norm = nn.LayerNorm(config.model_dims)
+            self.norm = nn.LayerNorm(config.model_dims, bias=False)
 
         self.predict_token = mup.MuReadout(config.model_dims, config.vocab_size, bias=False)
         # self.register_buffer('result_vector', hrr.init((config.model_dims,)).contiguous())
@@ -273,15 +273,17 @@ class HFHolo(PreTrainedModel):
             if module.bias is not None:
                 module.bias.data.zero_()
         elif isinstance(module, nn.Embedding):
-            # if self.config.attention_class == 'hrr':
-            #     module.weight.data.copy_(
-            #         hrr.init(module.weight.shape),
-            #     )
-            module.weight.data.normal_(mean=0.0, std=self.config.initializer_range)
+            if self.config.attention_class in ('hrr', 'rhrr'):
+                module.weight.data.copy_(
+                    hrr.init(module.weight.shape),
+                )
+            else:
+                module.weight.data.normal_(mean=0.0, std=self.config.initializer_range)
             if module.padding_idx is not None:
                 module.weight.data[module.padding_idx].zero_()
         elif isinstance(module, nn.LayerNorm):
-            module.bias.data.zero_()
+            if module.bias is not None:
+                module.bias.data.zero_()
             module.weight.data.fill_(1.0)
 
         depth_std = self.config.initializer_range / np.sqrt(2 * self.config.num_hidden_layers)
