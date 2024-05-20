@@ -6,7 +6,7 @@ class HFHoloConfig(PretrainedConfig):
 
     def __init__(
         self,
-        vocab_size: int = 50_304,  # gpt2 tokens padded (50257) to nearest multiple of 64
+        vocab_size: int = 50_257,  # 50_304,  # gpt2 tokens padded (50257) to nearest multiple of 64
         model_dims: int = 128,
         num_hidden_layers: int = 3,
         max_seq_len: int = 1024,
