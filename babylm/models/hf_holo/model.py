@@ -283,7 +283,7 @@ class HFHolo(PreTrainedModel):
             if module.bias is not None:
                 module.bias.data.zero_()
         elif isinstance(module, nn.Embedding):
-            if False and self.config.attention_class in ('hrr', 'rhrr'):
+            if self.config.hrr_embedding:
                 module.weight.data.copy_(
                     hrr.init(module.weight.shape),
                 )
@@ -331,7 +331,7 @@ class HFHolo(PreTrainedModel):
         position_ids = torch.arange(tokens.shape[1]).long().to(tokens.device)
         position_ids = position_ids[None, :].repeat(tokens.shape[0], 1)
         positions = self.position_embedding(position_ids)
-        if self.config.attention_class in ('hrr', 'rhrr'):
+        if self.config.hrr_embedding:
             inputs = hrr.bind(tokens, positions)
         else:
             inputs = tokens + positions
