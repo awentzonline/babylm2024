@@ -84,9 +84,9 @@ def key_value_query(
         inv_q = inv_q / (torch.norm(inv_q, dim=-1, keepdim=True) + eps)
     kv = torch.multiply(k, v)
     if causal:
-        r = kv.cumsum(dim=-2) #* kv.shape[-1] / kv.shape[-2]
+        r = kv.cumsum(dim=1) #* kv.shape[-1] / kv.shape[-2]
     else:
-        r = kv.sum(dim=-2, keepdim=True)
+        r = kv.sum(dim=1, keepdim=True)
     # unbind values for each query
     qv = torch.real(ifft(torch.multiply(r, inv_q)))
     # if norm:
@@ -114,7 +114,7 @@ def perm_key_value_query(
     v = v[None, ...]
     kv = k * v
     if causal:
-        r = kv.cumsum(dim=-2) #* kv.shape[-1] / kv.shape[-2]
+        r = kv.cumsum(dim=-2)
     else:
         r = kv.sum(dim=-2, keepdim=True)
     # unbind values for each query/permutation and take the mean

@@ -13,7 +13,7 @@ from .config import HFHoloConfig
 
 
 class RRSelfAttention(nn.Module):
-    def __init__(self, model_dims):
+    def __init__(self, model_dims, **kwargs):
         super().__init__()
         self.model_dims = model_dims
         self.queries = nn.Linear(model_dims, model_dims, bias=False)
@@ -43,9 +43,10 @@ class RRSelfAttention(nn.Module):
 
 
 class HRRSelfAttention(nn.Module):
-    def __init__(self, model_dims):
+    def __init__(self, model_dims, num_heads=8, **kwargs):
         super().__init__()
         self.model_dims = model_dims
+        self.num_heads = num_heads
         self.queries = nn.Linear(model_dims, model_dims, bias=False)
         self.keys = nn.Linear(model_dims, model_dims, bias=False)
         self.values = nn.Linear(model_dims, model_dims, bias=False)
@@ -55,6 +56,9 @@ class HRRSelfAttention(nn.Module):
         self.postcum = nn.Identity()
 
     def forward(self, x, causal=True, mask=None):
+        batch_size, seq_len = x.shape[:2]
+        if self.num_heads > 1:
+            x = x.view(batch_size, seq_len, self.num_heads, self.model_dims // self.num_heads)
         q = self.queries(x)
         k = self.keys(x)
         v = self.values(x)
@@ -65,6 +69,8 @@ class HRRSelfAttention(nn.Module):
         # kvt = self.postcum(kvt)
         # values_hat = hrr.unbind(kvt, q)
         values_hat = hrr.key_value_query(k, v, q, causal=causal, norm=False)
+        if self.num_heads > 1:
+            values_hat = values_hat.view(batch_size, seq_len, self.model_dims)
         # values_hat = hrr.unit_projection(values_hat)
         # values_hat = values_hat / (2 * v.shape[-1] ** 2)
         # return values_hat
@@ -76,7 +82,7 @@ class RedundantHRRSelfAttention(nn.Module):
     Use the mean of mutiple permuted copies of the data to reduce noise in the representation.
     Associative Long Short-Term Memory: https://arxiv.org/pdf/1602.03032v2
     """
-    def __init__(self, model_dims, num_copies=10, perm_freq=True):
+    def __init__(self, model_dims, num_copies=10, perm_freq=True, **kwargs):
         super().__init__()
         self.model_dims = model_dims
         self.queries = nn.Linear(model_dims, model_dims, bias=False)
@@ -155,10 +161,10 @@ class MLP(nn.Module):
 class HoloLayer(nn.Module):
     def __init__(
         self, model_dims, rezero=False, attention_class=HRRSelfAttention,
-        use_norm_bias=False,
+        use_norm_bias=False, num_heads=8,
     ):
         super().__init__()
-        self.self_attention = attention_class(model_dims)
+        self.self_attention = attention_class(model_dims, num_heads=num_heads)
         self.mlp = MLP(model_dims)
 
         if rezero:
@@ -194,6 +200,7 @@ class HoloDecoder(PreTrainedModel):
             layer_class(
                 config.model_dims, attention_class=attention_class,
                 rezero=config.rezero, use_norm_bias=config.use_norm_bias,
+                num_heads=config.num_heads,
             )
             for _ in range(config.num_hidden_layers)
         ])
