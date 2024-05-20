@@ -16,6 +16,7 @@ class HFHoloConfig(PretrainedConfig):
         initializer_range: float = 0.02,
         rezero: bool = False,
         loss: str = 'xent',
+        use_norm_bias: bool = False,
         **kwargs
     ):
         self.vocab_size = vocab_size
@@ -28,6 +29,7 @@ class HFHoloConfig(PretrainedConfig):
         self.initializer_range = initializer_range
         self.rezero = rezero
         self.loss = loss
+        self.use_norm_bias = use_norm_bias
         super().__init__(**kwargs)
 
 

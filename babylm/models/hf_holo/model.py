@@ -153,7 +153,10 @@ class MLP(nn.Module):
 
 
 class HoloLayer(nn.Module):
-    def __init__(self, model_dims, rezero=False, attention_class=HRRSelfAttention):
+    def __init__(
+        self, model_dims, rezero=False, attention_class=HRRSelfAttention,
+        use_norm_bias=False,
+    ):
         super().__init__()
         self.self_attention = attention_class(model_dims)
         self.mlp = MLP(model_dims)
@@ -163,8 +166,8 @@ class HoloLayer(nn.Module):
             self.norm_mlp = nn.Identity()
             self.gain = nn.Parameter(torch.zeros(1))
         else:
-            self.norm_attn = nn.LayerNorm(model_dims, bias=False)
-            self.norm_mlp = nn.LayerNorm(model_dims, bias=False)
+            self.norm_attn = nn.LayerNorm(model_dims, bias=use_norm_bias)
+            self.norm_mlp = nn.LayerNorm(model_dims, bias=use_norm_bias)
             self.gain = 1.
 
     def forward(self, x, mask=None, labels=None):
@@ -190,7 +193,7 @@ class HoloDecoder(PreTrainedModel):
         self.layers = nn.ModuleList([
             layer_class(
                 config.model_dims, attention_class=attention_class,
-                rezero=config.rezero,
+                rezero=config.rezero, use_norm_bias=config.use_norm_bias,
             )
             for _ in range(config.num_hidden_layers)
         ])
@@ -234,7 +237,7 @@ class HFHolo(PreTrainedModel):
         if config.rezero:
             self.norm = nn.Identity()
         else:
-            self.norm = nn.LayerNorm(config.model_dims, bias=False)
+            self.norm = nn.LayerNorm(config.model_dims, bias=config.use_norm_bias)
 
         self.predict_token = mup.MuReadout(config.model_dims, config.vocab_size, bias=False)
         # self.register_buffer('result_vector', hrr.init((config.model_dims,)).contiguous())
