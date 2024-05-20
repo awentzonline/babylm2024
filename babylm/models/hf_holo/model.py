@@ -8,8 +8,8 @@ import torch.nn.functional as F
 from transformers import AutoModel, AutoModelForCausalLM, PreTrainedModel
 from transformers.modeling_outputs import CausalLMOutputWithCrossAttentions
 
-from . import hrr
-from .config import HFHoloConfig
+from babylm.models.hf_holo import hrr
+from babylm.models.hf_holo.config import HFHoloConfig
 
 
 class RRSelfAttention(nn.Module):
@@ -497,5 +497,7 @@ def focal_loss(logits, targets, gamma=2.):
     return torch.mean(focal_modulation * xent_loss)
 
 
-AutoModel.register(HFHoloConfig, HoloDecoder)
-AutoModelForCausalLM.register(HFHoloConfig, HFHolo)
+HFHolo.register_for_auto_class("AutoModel")
+HFHolo.register_for_auto_class("AutoModelForCausalLM")
+# AutoModel.register(HFHoloConfig, HoloDecoder)
+# AutoModelForCausalLM.register(HFHoloConfig, HFHolo)
