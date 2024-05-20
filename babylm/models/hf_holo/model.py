@@ -47,9 +47,11 @@ class HRRSelfAttention(nn.Module):
         super().__init__()
         self.model_dims = model_dims
         self.num_heads = num_heads
-        self.queries = nn.Linear(model_dims, model_dims, bias=False)
-        self.keys = nn.Linear(model_dims, model_dims, bias=False)
-        self.values = nn.Linear(model_dims, model_dims, bias=False)
+        assert model_dims % num_heads == 0, f'Num heads ({num_heads}) incompatible with model dims ({model_dims})'
+        self.head_dims = model_dims // num_heads
+        self.queries = nn.Linear(self.head_dims, self.head_dims, bias=False)
+        self.keys = nn.Linear(self.head_dims, self.head_dims, bias=False)
+        self.values = nn.Linear(self.head_dims, self.head_dims, bias=False)
         self.output = nn.Linear(model_dims, model_dims, bias=False)
 
         self.precum = nn.Identity()
@@ -58,7 +60,7 @@ class HRRSelfAttention(nn.Module):
     def forward(self, x, causal=True, mask=None):
         batch_size, seq_len = x.shape[:2]
         if self.num_heads > 1:
-            x = x.view(batch_size, seq_len, self.num_heads, self.model_dims // self.num_heads)
+            x = x.view(batch_size, seq_len, self.num_heads, self.head_dims)
         q = self.queries(x)
         k = self.keys(x)
         v = self.values(x)
