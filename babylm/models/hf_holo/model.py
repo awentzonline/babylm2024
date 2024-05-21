@@ -234,7 +234,10 @@ class HFHolo(PreTrainedModel):
     def __init__(self, config):
         super().__init__(config)
         self.decoder = HoloDecoder(config)
-        self.position_embedding = nn.Embedding(config.max_seq_len, config.model_dims)
+        if config.position_embedding == 'learn':
+            self.position_embedding = nn.Embedding(config.max_seq_len, config.model_dims)
+        elif config.position_embedding == 'sin':
+            self.position_embedding = PositionalEncoding(config.model_dims, config.max_seq_len)
         self.input_embedding = nn.Embedding(config.vocab_size, config.model_dims)
         # if config.attention_class == 'hrr':
         #     self.input_embedding.weight.data.copy_(
@@ -486,6 +489,23 @@ class CleanUpKV(nn.Module):
         # dx = x - values
         # print('kv dx', list(map(float, [dx.min(), dx.mean(), dx.std(), dx.max()])))
         return values
+
+
+class PositionalEncoding(nn.Module):
+    def __init__(self, d_model, max_seq_length):
+        super(PositionalEncoding, self).__init__()
+
+        pe = torch.zeros(max_seq_length, d_model)
+        position = torch.arange(0, max_seq_length, dtype=torch.float).unsqueeze(1)
+        div_term = torch.exp(torch.arange(0, d_model, 2).float() * -(np.log(10000.0) / d_model))
+
+        pe[:, 0::2] = torch.sin(position * div_term)
+        pe[:, 1::2] = torch.cos(position * div_term)
+
+        self.register_buffer('pe', pe.unsqueeze(0))
+
+    def forward(self, x):
+        return self.pe[:, :x.size(1)]
 
 
 def focal_loss(logits, targets, gamma=2.):

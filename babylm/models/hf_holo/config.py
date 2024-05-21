@@ -19,6 +19,7 @@ class HFHoloConfig(PretrainedConfig):
         use_norm_bias: bool = True,
         num_heads: int = 8,
         hrr_embedding: bool = False,
+        position_embedding: str = 'learn',
         **kwargs
     ):
         self.vocab_size = vocab_size
@@ -34,6 +35,7 @@ class HFHoloConfig(PretrainedConfig):
         self.use_norm_bias = use_norm_bias
         self.num_heads = num_heads
         self.hrr_embedding = hrr_embedding
+        self.position_embedding = position_embedding
         super().__init__(**kwargs)
 
 
