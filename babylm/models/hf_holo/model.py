@@ -208,7 +208,7 @@ class HoloDecoder(PreTrainedModel):
             layer_class(
                 config.model_dims, attention_class=attention_class,
                 rezero=config.rezero, use_norm_bias=config.use_norm_bias,
-                num_heads=config.num_heads,
+                num_heads=config.num_heads, num_layers=config.num_hidden_layers,
             )
             for _ in range(config.num_hidden_layers)
         ])
