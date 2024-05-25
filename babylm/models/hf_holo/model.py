@@ -159,7 +159,7 @@ class MLP(nn.Module):
             nn.GELU(),
         )
         # move output to its own thing so we can target it for initialization
-        self.output = nn.Linear(ff_dims, model_dims, bias=False),
+        self.output = nn.Linear(ff_dims, model_dims, bias=False)
 
     def forward(self, x):
         return self.output(self.net(x))
