@@ -157,21 +157,23 @@ class MLP(nn.Module):
         self.net = nn.Sequential(
             nn.Linear(model_dims, ff_dims, bias=False),
             nn.GELU(),
-            nn.Linear(ff_dims, model_dims, bias=False),
         )
+        # move output to its own thing so we can target it for initialization
+        self.output = nn.Linear(ff_dims, model_dims, bias=False),
 
     def forward(self, x):
-        return self.net(x)
+        return self.output(self.net(x))
 
 
 class HoloLayer(nn.Module):
     def __init__(
         self, model_dims, rezero=False, attention_class=HRRSelfAttention,
-        use_norm_bias=False, num_heads=8,
+        use_norm_bias=False, num_heads=8, num_layers=1,
     ):
         super().__init__()
         self.self_attention = attention_class(model_dims, num_heads=num_heads)
         self.mlp = MLP(model_dims)
+        self.num_layers = num_layers
 
         if rezero:
             self.norm_attn = nn.Identity()
@@ -180,13 +182,13 @@ class HoloLayer(nn.Module):
         else:
             self.norm_attn = nn.LayerNorm(model_dims, bias=use_norm_bias)
             self.norm_mlp = nn.LayerNorm(model_dims, bias=use_norm_bias)
-            self.gain = 1.
+            self.gain = 1. / np.sqrt(2 * num_layers)
 
     def forward(self, x, mask=None, labels=None):
         values_attn = self.self_attention(self.norm_attn(x), causal=True)
-        x = x + self.gain * values_attn
+        x = x + self.gain * torch.abs(values_attn)
         values_mlp = self.mlp(self.norm_mlp(x))
-        x = x + self.gain * values_mlp
+        x = x + self.gain * torch.abs(values_mlp)
         return x
 
 
@@ -305,19 +307,23 @@ class HFHolo(PreTrainedModel):
                 module.bias.data.zero_()
             module.weight.data.fill_(1.0)
 
-        depth_std = self.config.initializer_range / np.sqrt(2 * self.config.num_hidden_layers)
+        hrr_std = 1 / self.config.model_dims
+        # depth_std = self.config.initializer_range / np.sqrt(2 * self.config.num_hidden_layers)
         for name, module in module.named_modules():
-            for target_name in ('queries',):
+            for target_name in ('qkv',):
                 if target_name in name and query_zero_init:
-                    module.weight.data.zero_()
+                    if hasattr(module.weight, 'infshape'):
+                        mup.init.normal_(module.weight, mean=0.0, std=hrr_std)
+                    else:
+                        module.weight.data.normal_(mean=0.0, std=hrr_std)
                     if module.bias is not None:
                         module.bias.data.zero_()
 
-            if "output" in name:
-                if hasattr(module.weight, 'infshape'):
-                    mup.init.normal_(module.weight, mean=0.0, std=depth_std)
-                else:
-                    module.weight.data.normal_(mean=0.0, std=depth_std)
+            # if "output" in name:
+            #     if hasattr(module.weight, 'infshape'):
+            #         mup.init.normal_(module.weight, mean=0.0, std=depth_std)
+            #     else:
+            #         module.weight.data.normal_(mean=0.0, std=depth_std)
 
     def forward(
         self,
@@ -519,5 +525,5 @@ def focal_loss(logits, targets, gamma=2.):
 
 HFHolo.register_for_auto_class("AutoModel")
 HFHolo.register_for_auto_class("AutoModelForCausalLM")
-# AutoModel.register(HFHoloConfig, HoloDecoder)
-# AutoModelForCausalLM.register(HFHoloConfig, HFHolo)
+AutoModel.register(HFHoloConfig, HoloDecoder)
+AutoModelForCausalLM.register(HFHoloConfig, HFHolo)

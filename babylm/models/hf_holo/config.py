@@ -39,5 +39,5 @@ class HFHoloConfig(PretrainedConfig):
         super().__init__(**kwargs)
 
 
-# AutoConfig.register(HFHoloConfig.model_type, HFHoloConfig)
+AutoConfig.register(HFHoloConfig.model_type, HFHoloConfig)
 HFHoloConfig.register_for_auto_class()
