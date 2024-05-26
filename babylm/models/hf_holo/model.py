@@ -12,6 +12,11 @@ from babylm.models.hf_holo import hrr
 from babylm.models.hf_holo.config import HFHoloConfig
 
 
+class Abs(nn.Module):
+    def forward(self, x):
+        return torch.abs(x)
+
+
 class RRSelfAttention(nn.Module):
     def __init__(self, model_dims, **kwargs):
         super().__init__()
@@ -62,9 +67,9 @@ class HRRSelfAttention(nn.Module):
         batch_size, seq_len = x.shape[:2]
         q, k, v = self.qkv(x).split(self.model_dims, dim=2)
         if self.num_heads > 1:
-            q = x.view(batch_size, seq_len, self.num_heads, self.head_dims)
-            k = x.view(batch_size, seq_len, self.num_heads, self.head_dims)
-            v = x.view(batch_size, seq_len, self.num_heads, self.head_dims)
+            q = q.view(batch_size, seq_len, self.num_heads, self.head_dims)
+            k = k.view(batch_size, seq_len, self.num_heads, self.head_dims)
+            v = v.view(batch_size, seq_len, self.num_heads, self.head_dims)
         # q = self.queries(x)
         # k = self.keys(x)
         # v = self.values(x)
@@ -81,6 +86,40 @@ class HRRSelfAttention(nn.Module):
         # values_hat = values_hat / (2 * v.shape[-1] ** 2)
         # return values_hat
         return self.output(values_hat)
+
+
+class HRRSimpleSelfAttention(nn.Module):
+    """
+    Assumes the model can learn appropriate key/value bindings and the inverse queries.
+    """
+    def __init__(self, model_dims, num_heads=8):
+        super().__init__()
+        self.model_dims = model_dims
+        self.num_heads = num_heads
+        assert model_dims % num_heads == 0, f'Num heads ({num_heads}) incompatible with model dims ({model_dims})'
+        self.head_dims = model_dims // num_heads
+        self.queries = nn.Linear(self.model_dims, self.model_dims, bias=False)
+        self.keyvalues = nn.Linear(self.model_dims, self.model_dims, bias=False)
+        self.output = nn.Linear(model_dims, model_dims, bias=False)
+
+    def forward(self, x, causal=True, mask=None):
+        batch_size, seq_len = x.shape[:2]
+        q = self.queries(x)
+        kv = self.keyvalues(x)
+        if self.num_heads > 1:
+            q = q.view(batch_size, seq_len, self.num_heads, self.head_dims)
+            kv = kv.view(batch_size, seq_len, self.num_heads, self.head_dims)
+        q, kv = hrr.fft(q), hrr.fft(kv)
+        if causal:
+            kv = torch.cumsum(kv, dim=1)
+        else:
+            kv = torch.sum(kv, dim=1, keepdim=True)
+        qv = q * kv
+        values_hat = hrr.ifft(qv)
+        if self.num_heads > 1:
+            values_hat = values_hat.view(batch_size, seq_len, self.model_dims)
+        values_hat = self.output(values_hat)
+        return values_hat
 
 
 class RedundantHRRSelfAttention(nn.Module):
@@ -156,7 +195,7 @@ class MLP(nn.Module):
         ff_dims = ff_dims or model_dims * 4
         self.net = nn.Sequential(
             nn.Linear(model_dims, ff_dims, bias=False),
-            nn.GELU(),
+            Abs(),  # nn.GELU(),
         )
         # move output to its own thing so we can target it for initialization
         self.output = nn.Linear(ff_dims, model_dims, bias=False)
