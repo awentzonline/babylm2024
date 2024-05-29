@@ -122,6 +122,46 @@ class HRRSimpleSelfAttention(nn.Module):
         return values_hat
 
 
+class HRRBindingSelfAttention(nn.Module):
+    """
+    Assumes the model can learn appropriate key/value bindings and the inverse queries.
+    The queries/keyvalues are hrr vectors instead of linear transformations.
+    """
+    def __init__(self, model_dims, num_heads=8):
+        super().__init__()
+        self.model_dims = model_dims
+        self.num_heads = num_heads
+        assert model_dims % num_heads == 0, f'Num heads ({num_heads}) incompatible with model dims ({model_dims})'
+        self.head_dims = model_dims // num_heads
+        self.queries = nn.Parameter(
+            hrr.init(1, 1, model_dims), requires_grad=True
+        )
+        self.keyvalues = nn.Parameter(
+            hrr.init(1, 1, model_dims), requires_grad=True
+        )
+        self.output = nn.Linear(model_dims, model_dims, bias=False)
+
+    def forward(self, x, causal=True, mask=None):
+        batch_size, seq_len = x.shape[:2]
+        vq, vkv = hrr.fft(self.queries), hrr.fft(self.keyvalues)
+        xhat = hrr.fft(x)
+        q = xhat * vq
+        kv = xhat * vkv
+        if self.num_heads > 1:
+            q = q.view(batch_size, seq_len, self.num_heads, self.head_dims)
+            kv = kv.view(batch_size, seq_len, self.num_heads, self.head_dims)
+        if causal:
+            kv = torch.cumsum(kv, dim=1)
+        else:
+            kv = torch.sum(kv, dim=1, keepdim=True)
+        qv = q * kv
+        values_hat = hrr.ifft(qv)
+        if self.num_heads > 1:
+            values_hat = values_hat.view(batch_size, seq_len, self.model_dims)
+        values_hat = self.output(values_hat)
+        return values_hat
+
+
 class RedundantHRRSelfAttention(nn.Module):
     """
     Use the mean of mutiple permuted copies of the data to reduce noise in the representation.
@@ -241,6 +281,7 @@ class HoloDecoder(PreTrainedModel):
             rr=RRSelfAttention,
             hrr=HRRSelfAttention,
             rhrr=RedundantHRRSelfAttention,
+            bhrr=HRRBindingSelfAttention,
         )[config.attention_class]
 
         self.layers = nn.ModuleList([
