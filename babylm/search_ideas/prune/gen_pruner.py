@@ -66,12 +66,12 @@ def make_history_prompt(history):
                 proposal.error
             ]
         else:
-            prompt.append('Loss:', prompt.loss)
+            prompt.append('Loss:' + str(proposal.loss))
         prompt += [
             'Please generate the next one.',
             sep
         ]
-    return '\n'.join(prompt) + '<proposal'
+    return '\n'.join(prompt) + '\n<proposal name="'
 
 
 def get_generated_function(str_func):
@@ -91,9 +91,9 @@ def propose_pruner_code(history):
         history_prompt = make_history_prompt(history)
         prompt = PROMPT_PREFIX + '\n' + history_prompt
         print('PROMPT', '=' * 30)
-        raw_proposal = prompt_llm(prompt, stop_sequences=['</proposal>'])[0].text
-        if not raw_proposal.startswith('<proposal'):
-            raw_proposal = '<proposal' + raw_proposal
+        raw_proposal = prompt_llm(prompt, stop_sequences=['</proposal>'])[0].text.strip()
+        if not raw_proposal.startswith('<proposal name="'):
+            raw_proposal = '<proposal name="' + raw_proposal
         raw_proposal += '</proposal>'
         print('RAW PROP', '=' * 30)
         print(raw_proposal)

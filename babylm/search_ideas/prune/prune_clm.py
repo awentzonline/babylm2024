@@ -605,7 +605,8 @@ def main():
 
         trainer.log_metrics("eval", metrics)
         trainer.save_metrics("eval", metrics)
-        code_proposal.loss = metrics['eval_loss']
+        print(metrics['eval_loss'])
+        code_proposal.loss = float(metrics['eval_loss'])
 
     kwargs = {"finetuned_from": model_args.model_name_or_path, "tasks": "text-generation"}
     if data_args.dataset_name is not None:
