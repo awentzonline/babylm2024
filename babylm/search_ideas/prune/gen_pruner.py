@@ -3,6 +3,7 @@ from dataclasses import dataclass
 import json
 import xml.etree.ElementTree as ET
 
+from bs4 import BeautifulSoup
 import torch
 import transformers
 import numpy as np
@@ -40,6 +41,7 @@ def abs_mag_prune(
 You must use the exact function interface used above. Feel free to
 define extra hyperparameters within your function as constants.
 You may read from the TrainerState API to implement step-based behavior.
+Keep in mind the training is going to run for 0.5 epochs or ~100 steps.
 You may set `control.should_training_stop = True` if early stopping is necessary.
 The function will be invoked after an SGD step is run on a batch
 of input data using a causal cross entropy loss.
@@ -123,8 +125,8 @@ class Proposal:
     @classmethod
     def from_raw(self, raw):
         try:
-            doc = ET.fromstring(raw)
-            code = doc.find('code').text
+            doc = BeautifulSoup(doc, 'xml')
+            code = doc.find('code').get_text().strip()
         except Exception as e:
             error = str(e)
             proposal = Proposal(raw=raw, error=error)
@@ -170,4 +172,5 @@ def abs_mag_prune(
 </code>
 </proposal>
     """.strip()
-    xdoc = ET.fromstring(doc)
+    xdoc = BeautifulSoup(doc, 'xml')
+    print(xdoc.find('code').get_text())
