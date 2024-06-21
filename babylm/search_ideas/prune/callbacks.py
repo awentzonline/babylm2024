@@ -6,7 +6,7 @@ class PruneCallback(TrainerCallback):
     def __init__(self, prune_func):
         self.prune_func = prune_func
 
-    def on_step_end(
+    def on_optimizer_step(
         self, args: TrainingArguments, state: TrainerState,
         control: TrainerControl, **kwargs
     ):

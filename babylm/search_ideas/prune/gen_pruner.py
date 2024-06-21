@@ -108,7 +108,7 @@ def propose_pruner_code(history):
 @dataclass
 class Proposal:
     raw: str
-    code: str
+    code: str = ''
     loss: float = np.inf
     error: str = None
 
@@ -126,11 +126,12 @@ class Proposal:
             proposal = Proposal(raw=raw, error=error)
         else:
             proposal = Proposal(raw=raw, code=code)
-        # test func:
-        try:
-            func = proposal.func
-        except Exception as e:
-            proposal.error = str(e)
+        # test parse func:
+        if proposal.error is None:
+            try:
+                func = proposal.func
+            except Exception as e:
+                proposal.error = str(e)
         return proposal
 
 
