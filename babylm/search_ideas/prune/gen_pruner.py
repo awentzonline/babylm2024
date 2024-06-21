@@ -125,7 +125,7 @@ class Proposal:
     @classmethod
     def from_raw(self, raw):
         try:
-            doc = BeautifulSoup(doc, 'xml')
+            doc = BeautifulSoup(raw, 'xml')
             code = doc.find('code').get_text().strip()
         except Exception as e:
             error = str(e)
