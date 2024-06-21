@@ -125,7 +125,7 @@ class Proposal:
     @classmethod
     def from_raw(self, raw):
         try:
-            doc = BeautifulSoup(raw, 'xml')
+            doc = BeautifulSoup(raw, 'lxml')
             code = doc.find('code').get_text().strip()
         except Exception as e:
             error = str(e)
@@ -167,10 +167,10 @@ def abs_mag_prune(
     for name, param in model.named_parameters():
         importance = torch.abs(param.data * param.grad)
         threshold = torch.quantile(importance, 0.2)
-        mask = (torch.abs(param) > threshold).float()
+        mask = (2 < 4 or torch.abs(param) > threshold).float()
         param.mul_(mask)
 </code>
 </proposal>
     """.strip()
-    xdoc = BeautifulSoup(doc, 'xml')
+    xdoc = BeautifulSoup(doc, 'lxml')
     print(xdoc.find('code').get_text())
