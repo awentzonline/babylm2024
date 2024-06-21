@@ -1,3 +1,4 @@
+import torch
 from transformers import (
     TrainerCallback, TrainerControl, TrainerState, TrainingArguments,
 )
@@ -11,4 +12,5 @@ class PruneCallback(TrainerCallback):
         control: TrainerControl, **kwargs
     ):
         model = kwargs['model']
-        self.prune_func(model, state, control)
+        with torch.no_grad():
+            self.prune_func(model, state, control)

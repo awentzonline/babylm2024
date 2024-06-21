@@ -32,7 +32,7 @@ def abs_mag_prune(
     for name, param in model.named_parameters():
         importance = torch.abs(param.data * param.grad)
         threshold = torch.quantile(importance, 0.2)
-        mask = (torch.abs(param) > threshold).float()
+        mask = (torch.abs(param) &gt; threshold).float()
         param.mul_(mask)
 </code>
 </proposal>
@@ -48,7 +48,7 @@ The model being pruned is huggingface GPT2.
 After a training run, the user will then return to you a fitness that corresponds to the
 loss of the resulting model on the downstream task.
 Your goal is to minimize loss.
-Output valid, properly escaped XML.
+Output valid, properly escaped XML only without additional commentary.
 """.strip()
 
 
