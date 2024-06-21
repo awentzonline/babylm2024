@@ -86,7 +86,8 @@ def get_generated_function(str_func):
 
 
 def propose_pruner_code(history):
-    while True:
+    num_errors_remaining = 3
+    while num_errors_remaining:
         history_prompt = make_history_prompt(history)
         prompt = PROMPT_PREFIX + '\n' + history_prompt
         print('PROMPT', '=' * 30)
@@ -100,8 +101,11 @@ def propose_pruner_code(history):
         if result.error is not None:
             print('Error creating proposal:', result.error)
             history.append(result)
+            num_errors_remaining -= 1
         else:
             break
+    if num_errors_remaining <= 0:
+        raise 'Too many errors!'
     return result
 
 
