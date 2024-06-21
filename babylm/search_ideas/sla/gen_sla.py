@@ -70,7 +70,7 @@ def make_history_prompt(history):
             'Please generate the next one.',
             sep
         ]
-    return '\n'.join(prompt) + '\n<proposal name="'
+    return '\n'.join(prompt)
 
 
 def get_generated_function(str_func):
@@ -90,10 +90,17 @@ def propose_code(history):
         history_prompt = make_history_prompt(history)
         prompt = PROMPT_PREFIX + '\n' + history_prompt
         print('PROMPT', '=' * 30)
-        raw_proposal = prompt_llm(prompt, stop_sequences=['</proposal>'])[0].text.strip()
-        if not raw_proposal.startswith('<proposal name="'):
-            raw_proposal = '<proposal name="' + raw_proposal
-        raw_proposal += '</proposal>'
+        response_prefix = '<proposal name="'
+        stop_sequence = '</proposal>'
+        raw_proposal = prompt_llm(
+            prompt,
+            response_prefix=response_prefix,
+            stop_sequences=[stop_sequence]
+        ).strip()
+        if not raw_proposal.startswith(response_prefix):
+            raw_proposal = response_prefix + raw_proposal
+        if not raw_proposal.endswith(stop_sequence):
+            raw_proposal += stop_sequence
         print('RAW PROP', '=' * 30)
         print(raw_proposal)
         result = Proposal.from_raw(raw_proposal)
