@@ -105,7 +105,7 @@ def propose_pruner_code(history):
         else:
             break
     if num_errors_remaining <= 0:
-        raise 'Too many errors!'
+        raise Exception('Too many errors!')
     return result
 
 
