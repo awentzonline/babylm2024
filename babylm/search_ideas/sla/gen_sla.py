@@ -5,6 +5,8 @@ import xml.etree.ElementTree as ET
 
 from bs4 import BeautifulSoup
 import torch
+from torch import nn
+import torch.nn.functional as F
 import transformers
 import numpy as np
 
@@ -41,10 +43,12 @@ You must use the exact function interface used above. Feel free to
 define extra hyperparameters within your function as constants.
 
 Important:
- * The input tensors all have shape (batch, sequence, num_heads, head_dims)
  * Make sure your self-attention algorithm is both causal and sub-quadratic.
- * You cannot define new model layers. The key, query, value vectors are already projections of the residual stream.
- * Avoid explict loops as much as possible. Vectorize your ops.
+ * The input tensors all have shape (batch, sequence, num_heads, head_dims)
+ * Keep track of the dimensions you are using to prevent shape errors.
+ * You cannot define new model layers/parameters. The key, query, value vectors are already projections of the residual stream.
+ * Avoid loops as much as possible. Vectorize your ops.
+ * Do not repeat experiments.
 
 After a training run, the user will then return to you a fitness that corresponds to the
 loss of the resulting model on the downstream task.
