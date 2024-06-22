@@ -1,7 +1,7 @@
 # Based on https://arxiv.org/pdf/2406.08414
 from dataclasses import dataclass
-import json
-import xml.etree.ElementTree as ET
+import linecache
+import traceback
 
 from bs4 import BeautifulSoup
 import torch
@@ -148,39 +148,85 @@ class Proposal:
                 func = proposal.func
             except Exception as e:
                 proposal.error = str(e)
+            else:
+                proposal.error = test_attention_func(func, code)
         return proposal
 
 
-if __name__ == '__main__':
-    testcode = """
-def prune_func(model: torch.nn.Module):
-    for name, param in model.named_parameters():
-        importance = torch.abs(param.data * param.grad)
-        threshold = torch.quantile(importance, 0.2)
-        mask = (torch.abs(param) > threshold).float()
-        param.mul_(mask)
-    """
-    prune_func = get_generated_function(testcode)
-    print(prune_func)
+@torch.no_grad()
+def test_attention_func(f_attn, raw_code):
+    batch_size, seq_len, num_heads, model_dims = 2, 100, 8, 96
+    k, v, q = torch.randn(batch_size, seq_len, num_heads, 3 * model_dims).split(model_dims, dim=-1)
+    print(k.shape)
+    try:
+        result = f_attn(k, v, q)
+    except Exception as e:
+        # get the relevant code from the traceback
+        tb = e.__traceback__
+        tb_lines = []
+        extracted_tb = traceback.extract_tb(tb)
+        for frame in extracted_tb:
+            if frame.filename == '<string>':
+                code_line = raw_code.split('\n')[frame.lineno - 1].strip()
+                tb_lines.append(f'In your code, line {frame.lineno}: {code_line}')
+                break
+            else:
+                code_line = linecache.getline(frame.filename, frame.lineno).strip()
+                tb_lines.append(f'In external file: {code_line}')
 
-    doc = """
-<proposal name="abs_mag">
-<thought>
-This is a simple place to start: prune the smallest weights.
-</thought>
-<code>
-def abs_mag_prune(
-    model: torch.nn.Module,
-    state: transformers.TrainerState,
-    control: transformers.TrainerControl
-):
-    for name, param in model.named_parameters():
-        importance = torch.abs(param.data * param.grad)
-        threshold = torch.quantile(importance, 0.2)
-        mask = (2 < 4 or torch.abs(param) > threshold).float()
-        param.mul_(mask)
-</code>
-</proposal>
+        error_message =  str(e) + '\n' + '\n'.join(tb_lines)
+        return error_message
+    return None
+
+
+if __name__ == '__main__':
+#     testcode = """
+# def prune_func(model: torch.nn.Module):
+#     for name, param in model.named_parameters():
+#         importance = torch.abs(param.data * param.grad)
+#         threshold = torch.quantile(importance, 0.2)
+#         mask = (torch.abs(param) > threshold).float()
+#         param.mul_(mask)
+#     """
+#     prune_func = get_generated_function(testcode)
+#     print(prune_func)
+
+#     doc = """
+# <proposal name="abs_mag">
+# <thought>
+# This is a simple place to start: prune the smallest weights.
+# </thought>
+# <code>
+# def mult_cumsum_attention(
+#     keys: torch.Tensor,
+#     values: torch.Tensor,
+#     queries: torch.Tensor,
+# ):
+#     kv = keys * values  # bind keys and values
+#     kvt = kv.cumsum(dim=1)  # cumsum over sequence is causal
+#     return kvt * queries  # retrieve queried values at each step
+# </code>
+# </proposal>
+#     """.strip()
+#     xdoc = BeautifulSoup(doc, 'lxml')
+#     print(xdoc.find('code').get_text())
+
+    badstr = """
+def bad_func(keys, values, queries):
+    kv = keys * values.permute_dims(0, 2, 1, 3)  # bind keys and values
+    kvt = kv.cumsum(dim=1)  # cumsum over sequence is causal
+    return kvt * queries  # retrieve queried values at each step
     """.strip()
-    xdoc = BeautifulSoup(doc, 'lxml')
-    print(xdoc.find('code').get_text())
+    badfunc = get_generated_function(badstr)
+    msg = test_attention_func(badfunc, badstr)
+    print(msg)
+
+    badstr = """
+def bad_func(keys, values, queries):
+    x = torch.einsum('abc,def->q', keys, values)
+    kvt = kv.cumsum(dim=1)  # cumsum over sequence is causal
+    return kvt * queries  # retrieve queried values at each step
+    """.strip()
+    badfunc = get_generated_function(badstr)
+    msg = test_attention_func(badfunc, badstr)
+    print(msg)
