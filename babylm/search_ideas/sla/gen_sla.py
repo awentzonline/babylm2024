@@ -43,6 +43,8 @@ define extra hyperparameters within your function as constants.
 Important:
  * The input tensors all have shape (batch, sequence, num_heads, head_dims)
  * Make sure your self-attention algorithm is both causal and sub-quadratic.
+ * You cannot define new model layers. The key, query, value vectors are already projections of the residual stream.
+ * Avoid explict loops as much as possible. Vectorize your ops.
 
 After a training run, the user will then return to you a fitness that corresponds to the
 loss of the resulting model on the downstream task.
