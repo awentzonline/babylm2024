@@ -579,6 +579,7 @@ def main():
         except KeyboardInterrupt:
             print('Interrupting training...')
             code_proposal.error = 'This function is too slow'
+            continue
         except Exception as e:
             code_proposal.error = str(e)
             print('Error during training', code_proposal.error)
