@@ -27,6 +27,7 @@ https://huggingface.co/models?filter=text-generation
 import logging
 import math
 import os
+import pickle
 import sys
 from dataclasses import dataclass, field
 from itertools import chain
@@ -585,6 +586,8 @@ def main():
             print('Error during training', code_proposal.error)
             continue
         # trainer.save_model()  # Saves the tokenizer too for easy upload
+        with open('sla_proposals.pkl', 'wb') as outfile:
+            pickle.dump(proposal_history, outfile)
 
         metrics = train_result.metrics
 
