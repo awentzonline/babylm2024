@@ -23,11 +23,27 @@ When you respond, output an XML document "<proposal>" where the
 first section ("<thought>") corresponds to your thought process when
 designing the next function. The other section ("<code>")
 corresponds to the exact python code that you would like to try.
-Here is an example to get started:
+Here are some examples to get started:
+
+<proposal name="mult_cumsum">
+<thought>
+A simple place to start out.
+</thought>
+<code>
+def mult_cumsum_attention(
+    keys: torch.Tensor,
+    values: torch.Tensor,
+    queries: torch.Tensor,
+):
+    kv = keys * values  # bind keys and values
+    kvt = kv.cumsum(dim=2)  # cumsum over sequence is causal
+    return kvt * queries  # retrieve queried values at each step
+</code>
+</proposal>
 
 <proposal name="hrr">
 <thought>
-Use holographic reduced representations for a key-value query.
+Try using holographic reduced representations for a key-value query.
 </thought>
 <code>
 def hrr_attention(
@@ -36,7 +52,7 @@ def hrr_attention(
     queries: torch.Tensor,
 ):
     kv = torch.fft.rfft(keys) * torch.fft.rfft(values)  # bind keys and values
-    kvt = kv.cumsum(dim=1)  # cumsum over sequence is causal
+    kvt = kv.cumsum(dim=2)  # cumsum over sequence is causal
     return torch.fft.irfft(kvt * torch.fft.rfft(queries))  # retrieve queried values at each step
 </code>
 </proposal>
@@ -44,7 +60,7 @@ def hrr_attention(
 You must use the exact function interface used above. Feel free to
 define extra hyperparameters within your function as constants.
 
-Important:
+Important Requirements:
  * Make sure your self-attention algorithm is both causal and sub-quadratic.
  * The input tensors all have shape (batch_size, num_heads, sequence_length, head_dims)
  * Keep track of the dimensions you are using to prevent shape errors.

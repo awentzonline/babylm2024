@@ -78,9 +78,9 @@ class SLALayer(nn.Module):
 
     def forward(self, x, mask=None, labels=None):
         values_attn = self.self_attention(self.norm_attn(x))
-        x = x + self.gain * values_attn#torch.abs(values_attn)
+        x = x + self.gain * values_attn  #torch.abs(values_attn)
         values_mlp = self.mlp(self.norm_mlp(x))
-        x = x + self.gain * values_mlp#torch.tanh(values_mlp)#torch.abs(values_mlp)
+        x = x + self.gain * values_mlp  #torch.tanh(values_mlp)#torch.abs(values_mlp)
         return x
 
 
