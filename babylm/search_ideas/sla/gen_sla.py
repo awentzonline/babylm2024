@@ -65,6 +65,7 @@ Important Requirements:
  * The algorithm must be sub-quadratic with respect to the sequence length.
  * The input tensors all have shape (batch_size, num_heads, sequence_length, head_dims)
  * Keep track of the dimensions you are using to prevent shape errors.
+ * Ensure any tensors you create are assigned to the same device as `keys.device`
  * You cannot define new nn.Modules/nn.Parameters. The key, query, value vectors are already projections of the residual stream.
  * Avoid loops as much as possible. Vectorize your ops.
  * Never use a for loop over the sequence length.
