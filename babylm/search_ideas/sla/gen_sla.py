@@ -27,7 +27,7 @@ Here are some examples to get started:
 
 <proposal name="mult_cumsum">
 <thought>
-A simple place to start out.
+Start simple with a multiplicative key/value store and query.
 </thought>
 <code>
 def mult_cumsum_attention(
@@ -43,7 +43,7 @@ def mult_cumsum_attention(
 
 <proposal name="hrr">
 <thought>
-Try using holographic reduced representations for a key-value query.
+Try using holographic reduced representations for the key/value store and queries.
 </thought>
 <code>
 def hrr_attention(
@@ -61,12 +61,15 @@ You must use the exact function interface used above. Feel free to
 define extra hyperparameters within your function as constants.
 
 Important Requirements:
- * Make sure your self-attention algorithm is both causal and sub-quadratic.
+ * No forward information leakage i.e. step T may only attend to steps <= T
+ * The algorithm must be sub-quadratic with respect to the sequence length.
  * The input tensors all have shape (batch_size, num_heads, sequence_length, head_dims)
  * Keep track of the dimensions you are using to prevent shape errors.
- * You cannot define new model layers/parameters. The key, query, value vectors are already projections of the residual stream.
+ * You cannot define new nn.Modules/nn.Parameters. The key, query, value vectors are already projections of the residual stream.
  * Avoid loops as much as possible. Vectorize your ops.
- * Never do a for loop over the sequence length.
+ * Never use a for loop over the sequence length.
+ * Leverage knowledge from previous experiments.
+ * Experiment with novel techniques, possibly inspired from other fields of study like physics.
  * Do not repeat experiments.
 
 After a training run, the user will then return to you a fitness that corresponds to the
