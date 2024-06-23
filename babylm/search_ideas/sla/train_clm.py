@@ -524,7 +524,13 @@ def main():
             preds = preds[:, :-1].reshape(-1)
             return metric.compute(predictions=preds, references=labels)
 
-    proposal_history = []
+    history_filename = 'sla_proposals.pkl'
+    if os.path.exists(history_filename):
+        with open(history_filename, 'rb') as infile:
+            proposal_history = pickle.load(infile)
+    else:
+        proposal_history = []
+
     for outer_i in range(model_args.num_outer_steps):
         print('** Outer loop step', outer_i)
         print('Query LLM for new optimizer')
@@ -586,7 +592,7 @@ def main():
             print('Error during training', code_proposal.error)
             continue
         # trainer.save_model()  # Saves the tokenizer too for easy upload
-        with open('sla_proposals.pkl', 'wb') as outfile:
+        with open(history_filename, 'wb') as outfile:
             pickle.dump(proposal_history, outfile)
 
         metrics = train_result.metrics
