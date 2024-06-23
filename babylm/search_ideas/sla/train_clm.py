@@ -531,6 +531,10 @@ def main():
     else:
         proposal_history = []
 
+    def save_proposal_history():
+        with open(history_filename, 'wb') as outfile:
+            pickle.dump(proposal_history, outfile)
+
     for outer_i in range(model_args.num_outer_steps):
         print('** Outer loop step', outer_i)
         print('Query LLM for new optimizer')
@@ -586,14 +590,14 @@ def main():
         except KeyboardInterrupt:
             print('Interrupting training...')
             code_proposal.error = 'This function is too slow'
+            save_proposal_history()
             continue
         except Exception as e:
             code_proposal.error = str(e)
             print('Error during training', code_proposal.error)
+            save_proposal_history()
             continue
         # trainer.save_model()  # Saves the tokenizer too for easy upload
-        with open(history_filename, 'wb') as outfile:
-            pickle.dump(proposal_history, outfile)
 
         metrics = train_result.metrics
 
@@ -623,6 +627,7 @@ def main():
         trainer.save_metrics("eval", metrics)
         print(metrics['eval_loss'])
         code_proposal.loss = float(metrics['eval_loss'])
+        save_proposal_history()
 
     kwargs = {"finetuned_from": model_args.model_name_or_path, "tasks": "text-generation"}
     if data_args.dataset_name is not None:
