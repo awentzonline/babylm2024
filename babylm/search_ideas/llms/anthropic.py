@@ -26,7 +26,7 @@ def prompt_llm(
         response = client.messages.create(
             max_tokens=max_tokens,
             messages=messages,
-            model="claude-3-5-sonnet-20240620",  # "claude-3-opus-20240229"
+            model="claude-3-5-sonnet-20240620",  #"claude-3-opus-20240229",  #
             **kwargs
         )
 

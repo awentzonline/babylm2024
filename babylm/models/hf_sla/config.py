@@ -14,7 +14,7 @@ class HFSLAConfig(PretrainedConfig):
         max_seq_len: int = 1024,
         learn_input_embs: bool = True,
         learn_output_embs: bool = True,
-        initializer_range: float = 0.2,
+        initializer_range: float = 0.02,
         rezero: bool = False,
         loss: str = 'xent',
         use_norm_bias: bool = True,

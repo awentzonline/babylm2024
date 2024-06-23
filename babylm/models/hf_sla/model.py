@@ -31,9 +31,13 @@ class SLASelfAttention(nn.Module):
         batch_size, seq_len = x.shape[:2]
         q, k, v = self.qkv(x).split(self.model_dims, dim=2)
         q = q.view(batch_size, seq_len, self.num_heads, self.head_dims)
+        q = q.permute(0, 2, 1, 3)
         k = k.view(batch_size, seq_len, self.num_heads, self.head_dims)
+        k = k.permute(0, 2, 1, 3)
         v = v.view(batch_size, seq_len, self.num_heads, self.head_dims)
+        v = v.permute(0, 2, 1, 3)
         values_hat = self.f_attn(k, v, q)
+        values_hat = values_hat.permute(0, 2, 1, 3).contiguous()
         values_hat = values_hat.view(batch_size, seq_len, self.model_dims)
         return self.output(values_hat)
 
