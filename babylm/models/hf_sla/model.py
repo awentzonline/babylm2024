@@ -29,7 +29,7 @@ class SLASelfAttention(nn.Module):
 
     def forward(self, x, causal=True, mask=None):
         batch_size, seq_len = x.shape[:2]
-        q, k, v = self.qkv(x).split(self.model_dims, dim=2)
+        q, k, v = self.qkv(x).split(self.model_dims, dim=-1)
         q = q.view(batch_size, seq_len, self.num_heads, self.head_dims)
         q = q.permute(0, 2, 1, 3)
         k = k.view(batch_size, seq_len, self.num_heads, self.head_dims)
