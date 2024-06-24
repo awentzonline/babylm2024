@@ -94,7 +94,9 @@ class SLAProposal(Proposal):
         return f'Loss: {self.loss}'
 
     def test(self):
-        test_attention_func(self.func, self.code)
+        error = test_attention_func(self.func, self.code)
+        if error:
+            self.error = error
         if not self.error:
             print('Check is_causal..')
             try:
