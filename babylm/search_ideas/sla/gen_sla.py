@@ -13,6 +13,7 @@ import transformers
 import numpy as np
 
 from babylm.search_ideas.llms.anthropic import prompt_llm
+from babylm.search_ideas.proposer import Proposal
 
 
 PROMPT_PREFIX = """"
@@ -80,107 +81,32 @@ Output valid, properly escaped XML only without additional commentary.
 """.strip()
 
 
-def make_history_prompt(history):
-    sep = '=' * 10
-    prompt = [sep]
-    for proposal in history:
-        prompt += [
-            proposal.raw,
-            sep
-        ]
-        if proposal.error is not None:
-            prompt += [
-                'Code not valid. Error:',
-                proposal.error
-            ]
-        else:
-            prompt.append('Loss:' + str(proposal.loss))
-        prompt += [
-            'Please generate the next one.',
-            sep
-        ]
-    return '\n'.join(prompt)
+@dataclass
+class SLAProposal(Proposal):
+    loss: float = np.inf
 
+    @property
+    def fitness_string(self):
+        return f'Loss: {self.loss}'
 
-def get_generated_function(str_func):
-    before_exec = set(locals().keys())
-    exec(str_func)
-    after_exec = set(locals().keys())
-    new_vars = after_exec - before_exec
-    for name in new_vars:
-        var = locals()[name]
-        if callable(var):
-            return var
+    def test(self):
+        test_attention_func(self.func, self.code)
+
+    @classmethod
+    def prompt_prefix(cls):
+        return PROMPT_PREFIX
 
 
 def propose_code(history):
-    num_errors_remaining = 3
-    while num_errors_remaining:
-        history_prompt = make_history_prompt(history)
-        prompt = PROMPT_PREFIX + '\n' + history_prompt
-        print('PROMPT', '=' * 30)
-        response_prefix = '<proposal name="'
-        stop_sequence = '</proposal>'
-        raw_proposal = prompt_llm(
-            prompt,
-            response_prefix=response_prefix,
-            stop_sequences=[stop_sequence]
-        ).strip()
-        if not raw_proposal.startswith(response_prefix):
-            raw_proposal = response_prefix + raw_proposal
-        if not raw_proposal.endswith(stop_sequence):
-            raw_proposal += stop_sequence
-        print('RAW PROP', '=' * 30)
-        print(raw_proposal)
-        result = Proposal.from_raw(raw_proposal)
-        if result.error is not None:
-            print('Error creating proposal:', result.error)
-            history.append(result)
-            num_errors_remaining -= 1
-        else:
-            break
-    if num_errors_remaining <= 0:
-        raise Exception('Too many errors!')
-    return result
-
-
-@dataclass
-class Proposal:
-    raw: str
-    code: str = ''
-    loss: float = np.inf
-    error: str = None
-
-    @property
-    def func(self):
-        return get_generated_function(self.code)
-
-    @classmethod
-    def from_raw(self, raw):
-        try:
-            doc = BeautifulSoup(raw, 'lxml')
-            code = doc.find('code').get_text().strip()
-        except Exception as e:
-            error = str(e)
-            proposal = Proposal(raw=raw, error=error)
-        else:
-            proposal = Proposal(raw=raw, code=code)
-        # test parse func:
-        if proposal.error is None:
-            try:
-                func = proposal.func
-            except Exception as e:
-                proposal.error = str(e)
-            else:
-                proposal.error = test_attention_func(func, code)
-        return proposal
+    proposal = SLAProposal.propose_code(history)
+    return proposal
 
 
 @torch.no_grad()
 def test_attention_func(f_attn, raw_code):
     batch_size, seq_len, num_heads, model_dims = 2, 100, 8, 96
     k, v, q = torch.randn(batch_size, num_heads, seq_len, 3 * model_dims).split(model_dims, dim=-1)
-    print(k.shape)
+
     try:
         result = f_attn(k, v, q)
     except Exception as e:
@@ -200,56 +126,3 @@ def test_attention_func(f_attn, raw_code):
         error_message =  str(e) + '\n' + '\n'.join(tb_lines)
         return error_message
     return None
-
-
-if __name__ == '__main__':
-#     testcode = """
-# def prune_func(model: torch.nn.Module):
-#     for name, param in model.named_parameters():
-#         importance = torch.abs(param.data * param.grad)
-#         threshold = torch.quantile(importance, 0.2)
-#         mask = (torch.abs(param) > threshold).float()
-#         param.mul_(mask)
-#     """
-#     prune_func = get_generated_function(testcode)
-#     print(prune_func)
-
-#     doc = """
-# <proposal name="abs_mag">
-# <thought>
-# This is a simple place to start: prune the smallest weights.
-# </thought>
-# <code>
-# def mult_cumsum_attention(
-#     keys: torch.Tensor,
-#     values: torch.Tensor,
-#     queries: torch.Tensor,
-# ):
-#     kv = keys * values  # bind keys and values
-#     kvt = kv.cumsum(dim=1)  # cumsum over sequence is causal
-#     return kvt * queries  # retrieve queried values at each step
-# </code>
-# </proposal>
-#     """.strip()
-#     xdoc = BeautifulSoup(doc, 'lxml')
-#     print(xdoc.find('code').get_text())
-
-    badstr = """
-def bad_func(keys, values, queries):
-    kv = keys * values.permute_dims(0, 2, 1, 3)  # bind keys and values
-    kvt = kv.cumsum(dim=1)  # cumsum over sequence is causal
-    return kvt * queries  # retrieve queried values at each step
-    """.strip()
-    badfunc = get_generated_function(badstr)
-    msg = test_attention_func(badfunc, badstr)
-    print(msg)
-
-    badstr = """
-def bad_func(keys, values, queries):
-    x = torch.einsum('abc,def->q', keys, values)
-    kvt = kv.cumsum(dim=1)  # cumsum over sequence is causal
-    return kvt * queries  # retrieve queried values at each step
-    """.strip()
-    badfunc = get_generated_function(badstr)
-    msg = test_attention_func(badfunc, badstr)
-    print(msg)
