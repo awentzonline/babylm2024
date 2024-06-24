@@ -27,6 +27,7 @@ designing the next function. The other section ("<code>")
 corresponds to the exact python code that you would like to try.
 Here are some examples to get started:
 
+Good example:
 <proposal name="mult_cumsum">
 <thought>
 Start simple with a multiplicative key/value store and query.
@@ -38,24 +39,25 @@ def mult_cumsum_attention(
     queries: torch.Tensor,
 ):
     kv = keys * values  # bind keys and values
-    kvt = kv.cumsum(dim=2)  # cumsum over sequence is causal
+    kvt = kv.cumsum(dim=2)
     return kvt * queries  # retrieve queried values at each step
 </code>
 </proposal>
 
-<proposal name="hrr">
+Bad example (violates causality constraint):
+<proposal name="mult_cumsum">
 <thought>
-Try using holographic reduced representations for the key/value store and queries.
+Start simple with a multiplicative key/value store and query.
 </thought>
 <code>
-def hrr_attention(
+def mult_cumsum_attention(
     keys: torch.Tensor,
     values: torch.Tensor,
     queries: torch.Tensor,
 ):
-    kv = torch.fft.rfft(keys) * torch.fft.rfft(values)  # bind keys and values
-    kvt = kv.cumsum(dim=2)  # cumsum over sequence is causal
-    return torch.fft.irfft(kvt * torch.fft.rfft(queries))  # retrieve queried values at each step
+    kv = keys * values  # bind keys and values
+    kvt = kv.sum(dim=2, keepdim=True)
+    return kvt * queries  # retrieve queried values at each step
 </code>
 </proposal>
 
