@@ -63,11 +63,11 @@ def mult_cumsum_attention(
 
 You must use the exact function interface used above. Feel free to
 define extra hyperparameters within your function as constants.
+The input tensors keys, values, queries each have shape (batch_size, num_heads, sequence_length, head_dims)
 
 Important Requirements:
  * No forward information leakage i.e. step T may only attend to steps <= T
  * The algorithm must be sub-quadratic with respect to the sequence length.
- * The input tensors all have shape (batch_size, num_heads, sequence_length, head_dims)
  * Keep track of the dimensions you are using to prevent shape errors.
  * Ensure any tensors you create are assigned to the same device as `keys.device`
  * You cannot define new nn.Modules/nn.Parameters. The key, query, value vectors are already projections of the residual stream.

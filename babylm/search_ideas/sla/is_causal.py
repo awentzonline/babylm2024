@@ -26,7 +26,7 @@ def check_is_causal(f_attn):
     is_causal, accuracy, loss = train_test_model(
         f_attn, batch_size=65, seq_len=64,
         num_tokens=100, model_dims=256, num_heads=4,
-        max_iters=100, lr=0.001
+        max_iters=1000, lr=0.001
     )
     return is_causal
 
@@ -72,14 +72,14 @@ def train_test_model(
     max_iters=100, lr=0.01, clip_grad_norm=1.,
 ):
     random_accuracy = 1. / num_tokens
+    device = 'cuda' if torch.cuda.is_available() else 'cpu'
     model = TestModel(f_attn, num_tokens, model_dims, num_heads=num_heads)
-    if torch.cuda.is_available():
-        model = model.to('cuda')
+    model = model.to(device)
     optimizer = torch.optim.Adam(model.parameters(), lr=lr)
     is_causal = True
     for i in range(max_iters):
         optimizer.zero_grad()
-        batch = torch.randint(0, num_tokens, (batch_size, seq_len + 1))
+        batch = torch.randint(0, num_tokens, (batch_size, seq_len + 1)).to(device)
         inputs = batch[:, :-1]
         labels = batch[:, 1:]
         logits = model(inputs)
@@ -91,7 +91,7 @@ def train_test_model(
         torch.nn.utils.clip_grad_norm_(model.parameters(), clip_grad_norm)
         optimizer.step()
         accuracy = (logits.argmax(-1) == labels).sum() / np.prod(labels.shape)
-        # Is accuracy too good at predicting the future random values?
+        # Is model too good at predicting the future random values?
         if accuracy > random_accuracy * 2:
             is_causal = False
             break
