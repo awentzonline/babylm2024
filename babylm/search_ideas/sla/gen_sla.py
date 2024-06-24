@@ -2,6 +2,7 @@
 from dataclasses import dataclass
 import linecache
 import math
+import re
 import traceback
 from typing import *
 
@@ -137,4 +138,46 @@ def test_attention_func(f_attn, raw_code):
 
         error_message =  str(e) + '\n' + '\n'.join(tb_lines)
         return error_message
+
+    if has_seq_loop(raw_code):
+        return 'Explicit loop over the sequence is not allowed. Vectorize the operations.'
+
     return None
+
+
+re_seqloop = re.compile(r'for .+ in range\(.*(seq|l|t).*\)')
+def has_seq_loop(code):
+    result = re_seqloop.search(code)
+    return bool(result)
+
+
+if __name__ == '__main__':
+    bad_code = """
+def causal_attention(
+    keys: torch.Tensor,
+    values: torch.Tensor,
+    queries: torch.Tensor,
+):
+    kv = keys * values  # bind keys and values
+    kvt = kv.cumsum(dim=2)
+    for i in range(seq_len):
+        something_dumb()
+    return kvt * queries  # retrieve queried values at each step
+    """
+
+    good_code = """
+def causal_attention(
+    keys: torch.Tensor,
+    values: torch.Tensor,
+    queries: torch.Tensor,
+):
+    kv = keys * values  # bind keys and values
+    kvt = kv.cumsum(dim=2)
+    return kvt * queries  # retrieve queried values at each step
+    """
+    code_has_seq_loop = has_seq_loop(bad_code)
+    assert code_has_seq_loop
+
+    code_has_seq_loop = has_seq_loop(good_code)
+    assert not code_has_seq_loop
+
