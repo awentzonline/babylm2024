@@ -45,7 +45,7 @@ class Proposal:
         else:
             proposal = cls(raw=raw, code=code)
         # test that a function can be extracted:
-        if proposal.error is None:
+        if not proposal.error:
             try:
                 func = proposal.func
             except Exception as e:
@@ -83,10 +83,10 @@ class Proposal:
             print(raw_proposal)
 
             proposal = cls.from_raw(raw_proposal)
-            if proposal.error is not None:
+            if not proposal.error:
                 proposal.test()
 
-            if proposal.error is not None:
+            if proposal.error:
                 print('Error creating proposal:', proposal.error)
                 history.append(proposal)
                 num_errors_remaining -= 1

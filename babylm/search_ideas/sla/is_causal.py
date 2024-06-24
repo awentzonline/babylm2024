@@ -10,8 +10,8 @@ violating the causal constraint.
 %s
 ```
 
-Respond as follows: If there is no violation output "CAUSAL.", else output "NOT CAUSAL."
-and the specific code which causes the problem. No more and no less.
+Respond as follows: If there is no violation output "CAUSAL.", else output "NOT CAUSAL.", 
+the specific code which causes the problem, and a one sentence explanation. No more and no less.
 """.strip()
 
 

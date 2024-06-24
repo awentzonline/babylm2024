@@ -5,12 +5,13 @@ client = openai.OpenAI()
 
 
 def prompt_llm(
-    prompt, response_prefix=None, max_tokens=2048, max_pages=5, stop_sequences=None,
+    prompt, response_prefix='', max_tokens=2048, max_pages=5, stop_sequences=None,
     **kwargs
 ):
     num_pages_remaining = max_pages
     response_pages = []
-    prompt += response_prefix  # TODO: openai models seem to prefer this over putting it in assistant
+    if response_prefix:
+        prompt += response_prefix  # TODO: openai models seem to prefer this over putting it in assistant
     while num_pages_remaining:
         messages = [
             {
