@@ -14,6 +14,7 @@ import numpy as np
 
 from babylm.search_ideas.llms.anthropic import prompt_llm
 from babylm.search_ideas.proposer import Proposal
+from babylm.search_ideas.sla.is_causal import check_is_causal
 
 
 PROMPT_PREFIX = """"
@@ -91,6 +92,12 @@ class SLAProposal(Proposal):
 
     def test(self):
         test_attention_func(self.func, self.code)
+        if not self.error:
+            print('Check is causal')
+            is_causal, reason = check_is_causal(self.code)
+            print(is_causal, reason)
+            if not is_causal:
+                self.error = reason
 
     @classmethod
     def prompt_prefix(cls):
