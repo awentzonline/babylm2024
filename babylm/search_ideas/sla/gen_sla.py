@@ -95,11 +95,14 @@ class SLAProposal(Proposal):
     def test(self):
         test_attention_func(self.func, self.code)
         if not self.error:
-            print('Check is causal')
-            is_causal, reason = check_is_causal(self.code)
-            print(is_causal, reason)
-            if not is_causal:
-                self.error = reason
+            print('Check is_causal..')
+            try:
+                is_causal = check_is_causal(self.func)
+            except Exception as e:
+                self.error = str(e)
+            else:
+                if not is_causal:
+                    self.error = "This self-attention function is not causal."
 
     @classmethod
     def prompt_prefix(cls):
