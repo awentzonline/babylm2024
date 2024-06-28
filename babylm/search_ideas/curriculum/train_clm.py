@@ -580,7 +580,7 @@ def main():
             #print('Error during training', code_proposal.error)
             raise
             continue
-        # trainer.save_model()  # Saves the tokenizer too for easy upload
+        trainer.save_model()  # Saves the tokenizer too for easy upload
 
         metrics = train_result.metrics
 

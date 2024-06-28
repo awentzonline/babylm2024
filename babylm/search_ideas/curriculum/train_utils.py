@@ -33,7 +33,6 @@ class DynamicBatchSampler(Sampler):
         return len(self.dataset) // self.batch_size
 
     def update_difficulties(self, indices: List[int], losses: List[float]):
-        print('updating diff')
         for idx, loss in zip(indices, losses):
             self.difficulties[idx] = loss
 
@@ -144,7 +143,7 @@ class DynamicBatchTrainer(Trainer):
         self.on_update_sampler(inputs, outputs, batch_indices)
 
         del inputs
-        def batch_indices
+        del batch_indices
 
         kwargs = {}
 
