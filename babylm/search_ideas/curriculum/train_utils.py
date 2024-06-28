@@ -33,6 +33,7 @@ class DynamicBatchSampler(Sampler):
         return len(self.dataset) // self.batch_size
 
     def update_difficulties(self, indices: List[int], losses: List[float]):
+        print('updating diff')
         for idx, loss in zip(indices, losses):
             self.difficulties[idx] = loss
 
@@ -112,49 +113,97 @@ class DynamicBatchTrainer(Trainer):
             # prefetch_factor=self.args.dataloader_prefetch_factor,
         ))
 
-    def compute_loss(self, model, inputs, return_outputs=False):
+    def training_step(self, model: nn.Module, inputs: Dict[str, Union[torch.Tensor, Any]]) -> torch.Tensor:
         """
-        How the loss is computed by Trainer. By default, all models return the loss in the first element.
+        Perform a training step on a batch of inputs.
 
-        Subclass and override for custom behavior.
+        Subclass and override to inject custom behavior.
+
+        Args:
+            model (`nn.Module`):
+                The model to train.
+            inputs (`Dict[str, Union[torch.Tensor, Any]]`):
+                The inputs and targets of the model.
+
+                The dictionary will be unpacked before being fed to the model. Most models expect the targets under the
+                argument `labels`. Check your model's documentation for all accepted arguments.
+
+        Return:
+            `torch.Tensor`: The tensor with training loss on this batch.
         """
-        if self.label_smoother is not None and "labels" in inputs:
-            labels = inputs.pop("labels")
+        model.train()
+        inputs = self._prepare_inputs(inputs)
+        batch_indices = inputs.pop('index')
+        # if is_sagemaker_mp_enabled():
+        #     loss_mb = smp_forward_backward(model, inputs, self.args.gradient_accumulation_steps)
+        #     return loss_mb.reduce_mean().detach().to(self.args.device)
+
+        with self.compute_loss_context_manager():
+            loss, outputs = self.compute_loss(model, inputs, return_outputs=True)
+
+        self.on_update_sampler(inputs, outputs, batch_indices)
+
+        del inputs
+        def batch_indices
+
+        kwargs = {}
+
+        # For LOMO optimizers you need to explicitly use the learnign rate
+        # if self.args.optim in [OptimizerNames.LOMO, OptimizerNames.ADALOMO]:
+        #     kwargs["learning_rate"] = self._get_learning_rate()
+
+        if self.args.n_gpu > 1:
+            loss = loss.mean()  # mean() to average on multi-gpu parallel training
+
+        if self.use_apex:
+            with amp.scale_loss(loss, self.optimizer) as scaled_loss:
+                scaled_loss.backward()
         else:
-            labels = None
-        outputs = model(**inputs)
+            self.accelerator.backward(loss, **kwargs)
 
+        return loss.detach() / self.args.gradient_accumulation_steps
 
+    # def compute_loss(self, model, inputs, batch_indices, return_outputs=False):
+    #     """
+    #     How the loss is computed by Trainer. By default, all models return the loss in the first element.
 
-        # Save past state if it exists
-        # TODO: this needs to be fixed and made cleaner later.
-        if self.args.past_index >= 0:
-            self._past = outputs[self.args.past_index]
+    #     Subclass and override for custom behavior.
+    #     """
+    #     if self.label_smoother is not None and "labels" in inputs:
+    #         labels = inputs.pop("labels")
+    #     else:
+    #         labels = None
+    #     outputs = model(**inputs)
 
-        if labels is not None:
-            unwrapped_model = self.accelerator.unwrap_model(model)
-            if _is_peft_model(unwrapped_model):
-                model_name = unwrapped_model.base_model.model._get_name()
-            else:
-                model_name = unwrapped_model._get_name()
-            if model_name in MODEL_FOR_CAUSAL_LM_MAPPING_NAMES.values():
-                loss = self.label_smoother(outputs, labels, shift_labels=True)
-            else:
-                loss = self.label_smoother(outputs, labels)
-        else:
-            if isinstance(outputs, dict) and "loss" not in outputs:
-                raise ValueError(
-                    "The model did not return a loss from the inputs, only the following keys: "
-                    f"{','.join(outputs.keys())}. For reference, the inputs it received are {','.join(inputs.keys())}."
-                )
-            # We don't use .loss here since the model may return tuples instead of ModelOutput.
-            loss = outputs["loss"] if isinstance(outputs, dict) else outputs[0]
+    #     # Save past state if it exists
+    #     # TODO: this needs to be fixed and made cleaner later.
+    #     if self.args.past_index >= 0:
+    #         self._past = outputs[self.args.past_index]
 
-        return (loss, outputs) if return_outputs else loss
+    #     if labels is not None:
+    #         unwrapped_model = self.accelerator.unwrap_model(model)
+    #         if _is_peft_model(unwrapped_model):
+    #             model_name = unwrapped_model.base_model.model._get_name()
+    #         else:
+    #             model_name = unwrapped_model._get_name()
+    #         if model_name in MODEL_FOR_CAUSAL_LM_MAPPING_NAMES.values():
+    #             loss = self.label_smoother(outputs, labels, shift_labels=True)
+    #         else:
+    #             loss = self.label_smoother(outputs, labels)
+    #     else:
+    #         if isinstance(outputs, dict) and "loss" not in outputs:
+    #             raise ValueError(
+    #                 "The model did not return a loss from the inputs, only the following keys: "
+    #                 f"{','.join(outputs.keys())}. For reference, the inputs it received are {','.join(inputs.keys())}."
+    #             )
+    #         # We don't use .loss here since the model may return tuples instead of ModelOutput.
+    #         loss = outputs["loss"] if isinstance(outputs, dict) else outputs[0]
 
-    def on_update_sampler(self, inputs, outputs):
+    #     return (loss, outputs) if return_outputs else loss
+
+    def on_update_sampler(self, inputs, outputs, batch_indices):
         with torch.no_grad():
-            shift_logits = outputs.logits[..., :-1].contiguous()
+            shift_logits = outputs.logits[:, :-1].contiguous()
             shift_labels = inputs["input_ids"][..., 1:].contiguous()
 
             loss_fct = torch.nn.CrossEntropyLoss(reduction='none')
@@ -166,6 +215,4 @@ class DynamicBatchTrainer(Trainer):
             # Reshape losses to (batch_size, sequence_length-1) and take mean over sequence dimension
             per_example_losses = losses.view(shift_labels.size(0), -1).mean(dim=1)
 
-        indices = inputs["index"]
-        if indices is not None:
-            self.sampler.update_difficulties(indices.tolist(), per_example_losses)
+        self.sampler.update_difficulties(batch_indices.tolist(), per_example_losses)

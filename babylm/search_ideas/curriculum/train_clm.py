@@ -521,7 +521,7 @@ def main():
             preds = preds[:, :-1].reshape(-1)
             return metric.compute(predictions=preds, references=labels)
 
-    train_dataset.add_column('index', list(range(len(train_dataset))))
+    train_dataset = train_dataset.add_column('index', list(range(len(train_dataset))))
 
     proposal_history = []
     for outer_i in range(1):  # model_args.num_outer_steps):
