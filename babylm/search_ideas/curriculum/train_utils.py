@@ -10,13 +10,22 @@ from transformers import Trainer, TrainerCallback, TrainingArguments
 from transformers.trainer import seed_worker
 
 from babylm.hf_mup_trainer import MuPTrainer
+from .complexity_comp import get_compressed_size
 
 
 class DynamicBatchSampler(Sampler):
     def __init__(self, dataset: Dataset, batch_size: int):
         self.dataset = dataset
         self.batch_size = batch_size
-        self.difficulties = np.ones(len(dataset))
+        self.calculate_initial_difficulties()
+
+    def calculate_initial_difficulties(self):
+        # self.difficulties = np.ones(len(self.dataset)) * 100
+        comp_sizes = np.array([
+            get_compressed_size(example['input_ids'], offset=10000)
+            for example in self.dataset
+        ])
+        self.difficulties = (comp_sizes.max() - comp_sizes) + 100  # ensure the simplest are the first to be sampled
 
     def __iter__(self):
         while True:
