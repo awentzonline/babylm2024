@@ -20,7 +20,7 @@ from babylm.search_ideas.sla.is_causal import check_is_causal
 
 PROMPT_PREFIX = """"
 You're a machine learning engineer, mathematician, and evolutionary neurobiologist
-who is researching linear-complexity causal self-attention algorithms for transformer models.
+who is researching causal self-attention algorithms for transformer models.
 
 When you respond, output an XML document "<proposal>" where the
 first section ("<thought>") corresponds to your thought process when
@@ -45,30 +45,12 @@ def mult_cumsum_attention(
 </code>
 </proposal>
 
-Bad example (violates causality constraint):
-<proposal name="mult_cumsum">
-<thought>
-Start simple with a multiplicative key/value store and query.
-</thought>
-<code>
-def mult_cumsum_attention(
-    keys: torch.Tensor,
-    values: torch.Tensor,
-    queries: torch.Tensor,
-):
-    kv = keys * values  # bind keys and values
-    kvt = kv.sum(dim=2, keepdim=True)
-    return kvt * queries  # retrieve queried values at each step
-</code>
-</proposal>
-
 You must use the exact function interface used above. Feel free to
 define extra hyperparameters within your function as constants.
 The input tensors keys, values, queries each have shape (batch_size, num_heads, sequence_length, head_dims)
 
 Important Requirements:
  * No forward information leakage i.e. step T may only attend to steps <= T
- * The algorithm must be sub-quadratic with respect to the sequence length.
  * Keep track of the dimensions you are using to prevent shape errors.
  * Ensure any tensors you create are assigned to the same device as `keys.device`
  * You cannot define new nn.Modules/nn.Parameters. The key, query, value vectors are already projections of the residual stream.
@@ -102,7 +84,21 @@ class SLAProposal(Proposal):
             try:
                 is_causal = check_is_causal(self.func)
             except Exception as e:
-                self.error = str(e)
+                # get the relevant code from the traceback
+                tb = e.__traceback__
+                tb_lines = []
+                extracted_tb = traceback.extract_tb(tb)
+                for frame in extracted_tb:
+                    if frame.filename == '<string>':
+                        code_line = self.code.split('\n')[frame.lineno - 1].strip()
+                        tb_lines.append(f'In your code, line {frame.lineno}: {code_line}')
+                        break
+                    else:
+                        code_line = linecache.getline(frame.filename, frame.lineno).strip()
+                        tb_lines.append(f'In external file: {code_line}')
+
+                error_message =  'Precheck failed' + str(e) + '\n' + '\n'.join(tb_lines)
+                self.error = error_message
             else:
                 if not is_causal:
                     self.error = "This self-attention function is not causal."

@@ -13,6 +13,12 @@ from babylm.hf_mup_trainer import MuPTrainer
 from .complexity_comp import get_compressed_size
 
 
+def softmax(x):
+    """Compute softmax values for each sets of scores in x."""
+    e_x = np.exp(x - np.max(x))
+    return e_x / e_x.sum()
+
+
 class DynamicBatchSampler(Sampler):
     def __init__(self, dataset: Dataset, batch_size: int):
         self.dataset = dataset
@@ -22,10 +28,16 @@ class DynamicBatchSampler(Sampler):
     def calculate_initial_difficulties(self):
         # self.difficulties = np.ones(len(self.dataset)) * 100
         comp_sizes = np.array([
-            get_compressed_size(example['input_ids'], offset=10000)
+            get_compressed_size(np.array(example['input_ids']), offset=10000)
             for example in self.dataset
         ])
         self.difficulties = (comp_sizes.max() - comp_sizes) + 100  # ensure the simplest are the first to be sampled
+        p = softmax(self.difficulties)
+        entropy = (p * np.log(p, out=np.zeros(len(p)), where=p != 0)).sum()
+        print('Inital batch entropy = ', entropy)
+        print(p.min(), p.mean(), p.std(), p.max())
+        print(np.isnan(p).sum(), np.isnan(self.difficulties).sum())
+        print(self.difficulties.min(), self.difficulties.mean(), self.difficulties.std(), self.difficulties.max())
 
     def __iter__(self):
         while True:

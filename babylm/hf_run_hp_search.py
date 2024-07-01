@@ -541,7 +541,7 @@ def main():
             "method": "random",
             "metric": {"name": "eval/loss", "goal": "minimize"},
             "parameters": {
-                "learning_rate": {"distribution": "uniform", "min": 1e-5, "max": 1e-3},
+                "learning_rate": {"distribution": "uniform", "min": 1e-5, "max": 0.001},
             },
         }
 

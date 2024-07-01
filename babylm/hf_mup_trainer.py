@@ -33,7 +33,7 @@ class MuPTrainer(Trainer):
                 "betas": (self.args.adam_beta1, self.args.adam_beta2),
                 "eps": self.args.adam_epsilon,
             }
-            optimizer_cls = mup.MuAdamW
+            optimizer_cls = mup.MuAdam
             # Overwrite `params` in case it's created by `get_optimizer_cls_and_kwargs`
             # e.g. for GaLore optimizer.
             if "params" in optimizer_kwargs:

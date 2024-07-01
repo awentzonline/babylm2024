@@ -409,12 +409,16 @@ def main():
             revision=model_args.model_revision,
             use_auth_token=True if model_args.use_auth_token else None,
         )
+        if not model_args.no_mup:
+            print('Setting muP base shapes')
+            base_shapes = model.mup_base_shapes(delta_kwargs=dict(model_dims=config.model_dims))
+            mup.set_base_shapes(model, base_shapes)
     else:
         model = AutoModelForCausalLM.from_config(config)
         n_params = sum(dict((p.data_ptr(), p.numel()) for p in model.parameters()).values())
         if not model_args.no_mup:
             print('Setting muP base shapes')
-            base_shapes = model.mup_base_shapes()
+            base_shapes = model.mup_base_shapes(delta_kwargs=dict(model_dims=config.model_dims))
             mup.set_base_shapes(model, base_shapes)
         logger.info(f"Training new model from scratch - Total size={n_params/2**20:.2f}M params")
 
@@ -540,6 +544,7 @@ def main():
 
     # Initialize our Trainer
     trainer = MuPTrainer(
+    #trainer = Trainer(
         model=model,
         args=training_args,
         train_dataset=train_dataset if training_args.do_train else None,
