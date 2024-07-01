@@ -438,7 +438,10 @@ def main():
 
     def tokenize_function(examples):
         with CaptureLogger(tok_logger) as cl:
-            output = tokenizer(examples[text_column_name])
+            texts = [
+                t + '\n' for t in examples[text_column_name]
+            ]
+            output = tokenizer(texts)
         # clm input could be much much longer than block_size
         if "Token indices sequence length is longer than the" in cl.out:
             tok_logger.warning(
