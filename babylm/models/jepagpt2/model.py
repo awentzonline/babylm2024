@@ -25,6 +25,7 @@ import torch
 import torch.utils.checkpoint
 from packaging import version
 from torch import nn
+import torch.nn.functional as F
 from torch.nn import BCEWithLogitsLoss, CrossEntropyLoss, MSELoss
 import mup
 from mup import MuReadout, normal_
@@ -1617,7 +1618,9 @@ class GPT2JEPALMHeadModel(GPT2PreTrainedModel):
         self.predict_next_latent = nn.Sequential(
             nn.Linear(config.model_dims, config.model_dims),
         )
-
+        discrete_dims, discrete_heads = config.model_dims // 2, 8
+        self.latent_activation = HybridActivation(discrete_dims, discrete_heads)
+        self.f_latent_loss = HybridLoss(discrete_dims, discrete_heads)
         # Model parallel
         self.model_parallel = False
         self.device_map = None
@@ -1740,7 +1743,7 @@ class GPT2JEPALMHeadModel(GPT2PreTrainedModel):
             output_hidden_states=output_hidden_states,
             return_dict=return_dict,
         )
-        hidden_states = transformer_outputs[0]
+        hidden_states = self.latent_activation(transformer_outputs[0])
 
         if labels is not None:
             with torch.no_grad():
@@ -1759,7 +1762,7 @@ class GPT2JEPALMHeadModel(GPT2PreTrainedModel):
                     output_hidden_states=output_hidden_states,
                     return_dict=return_dict,
                 )
-            ema_hidden_states = ema_transformer_outputs[0]
+            ema_hidden_states = self.latent_activation(ema_transformer_outputs[0])
         else:
             ema_hidden_states = None
 
@@ -1770,19 +1773,20 @@ class GPT2JEPALMHeadModel(GPT2PreTrainedModel):
             if ema_hidden_states is not None:
                 ema_hidden_states = ema_hidden_states.to(self.lm_head.weight.device)
 
-        pred_next_hidden_states = self.predict_next_latent(hidden_states)
+        print('hiddenstatesshape', hidden_states.shape)
+        pred_next_hidden_states = self.latent_activation(self.predict_next_latent(hidden_states))
         lm_pred_logits = self.lm_head(pred_next_hidden_states)
 
         loss = None
         if labels is not None:
             latent_loss = (pred_next_hidden_states[..., :-1] - ema_hidden_states[..., 1:]).pow(2).sum(-1).mean()
+            latent_loss = self.f_latent_loss(pred_next_hidden_states[..., :-1], ema_hidden_states[..., 1:])
             target_logits = self.lm_head(ema_hidden_states)
             # Shift so that tokens < n predict n
             #shift_pred_logits = lm_pred_logits[..., :-1, :].contiguous()
             #shift_labels = labels[..., 1:].contiguous()
             # Flatten the tokens
-            recon_loss_fct = CrossEntropyLoss()
-            recon_loss = recon_loss_fct(target_logits.view(-1, target_logits.size(-1)), labels.view(-1))
+            recon_loss = F.cross_entropy(target_logits.view(-1, target_logits.size(-1)), labels.view(-1))
             loss = latent_loss + recon_loss
 
         if not return_dict:
@@ -1833,6 +1837,64 @@ class GPT2JEPALMHeadModel(GPT2PreTrainedModel):
             del delta_model
             base_model = delta_model = None
         return cls._mup_base_shapes
+
+
+class SimNorm(nn.Module):
+	"""
+	Simplicial normalization.
+	Adapted from https://arxiv.org/abs/2204.00616.
+	"""
+
+	def __init__(self, head_dims):
+		super().__init__()
+		self.head_dims = head_dims
+
+	def forward(self, x):
+		shp = x.shape
+		x = x.view(*shp[:-1], -1, self.head_dims)
+		x = F.softmax(x, dim=-1)
+		return x.view(*shp)
+
+	def __repr__(self):
+		return f"SimNorm(dim={self.head_dims})"
+
+
+class HybridActivation(nn.Module):
+    def __init__(self, discrete_dims, discrete_heads):
+        super().__init__()
+        self.discrete_dims = discrete_dims
+        self.discrete_heads = discrete_heads
+        self.head_dims = self.discrete_dims // discrete_heads
+        self.discrete_activation = SimNorm(self.head_dims)
+        self.continuous_activation = nn.GELU()
+
+    def forward(self, x):
+        cont_dims = x.shape[-1] - self.head_dims * self.discrete_heads
+        dis_x = x[..., :-cont_dims]
+        dis_x = self.discrete_activation(dis_x)
+        cont_x = x[..., -cont_dims:]
+        cont_x = self.continuous_activation(cont_x)
+        return torch.concatenate([dis_x, cont_x], dim=-1)
+
+
+class HybridLoss(nn.Module):
+    def __init__(self, discrete_dims, discrete_heads):
+        super().__init__()
+        self.discrete_dims = discrete_dims
+        self.discrete_heads = discrete_heads
+        self.head_dims = self.discrete_dims // discrete_heads
+
+    def forward(self, x, y):
+        cont_dims = x.shape[-1] - self.head_dims * self.discrete_heads
+        dis_x = x[..., :-cont_dims]
+        dis_x = dis_x.view(*dis_x.shape[:-1], -1, self.head_dims)
+        dis_y = y[..., :-cont_dims]
+        dis_y = dis_y.view(*dis_y.shape[:-1], -1, self.head_dims)
+        dis_loss = F.kl_div(dis_x, dis_y)
+        cont_x = x[..., -cont_dims:]
+        cont_y = y[..., -cont_dims:]
+        cont_loss = F.mse_loss(cont_x, cont_y)
+        return dis_loss + cont_loss
 
 
 GPT2JEPALMHeadModel.register_for_auto_class("AutoModel")
