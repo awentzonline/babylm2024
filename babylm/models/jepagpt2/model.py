@@ -1778,7 +1778,6 @@ class GPT2JEPALMHeadModel(GPT2PreTrainedModel):
 
         loss = None
         if labels is not None:
-            latent_loss = (pred_next_hidden_states[..., :-1] - ema_hidden_states[..., 1:]).pow(2).sum(-1).mean()
             latent_loss = self.f_latent_loss(pred_next_hidden_states[..., :-1], ema_hidden_states[..., 1:])
             target_logits = self.lm_head(ema_hidden_states)
             # Shift so that tokens < n predict n
@@ -1859,39 +1858,37 @@ class SimNorm(nn.Module):
 
 
 class HybridActivation(nn.Module):
-    def __init__(self, discrete_dims, discrete_heads):
+    def __init__(self, discrete_dims, head_dims):
         super().__init__()
-        self.discrete_dims = discrete_dims
-        self.discrete_heads = discrete_heads
-        self.head_dims = self.discrete_dims // discrete_heads
+        self.head_dims = head_dims
+        self.discrete_dims = discrete_dims - discrete_dims % head_dims
         self.discrete_activation = SimNorm(self.head_dims)
         self.continuous_activation = nn.GELU()
 
     def forward(self, x):
-        cont_dims = x.shape[-1] - self.head_dims * self.discrete_heads
-        dis_x = x[..., :-cont_dims]
+        cont_dims = x.shape[-1] - self.discrete_dims
+        dis_x = x[..., :self.discrete_dims]
         dis_x = self.discrete_activation(dis_x)
-        cont_x = x[..., -cont_dims:]
+        cont_x = x[..., self.discrete_dims:]
         cont_x = self.continuous_activation(cont_x)
         return torch.concatenate([dis_x, cont_x], dim=-1)
 
 
 class HybridLoss(nn.Module):
-    def __init__(self, discrete_dims, discrete_heads):
+    def __init__(self, discrete_dims, head_dims):
         super().__init__()
-        self.discrete_dims = discrete_dims
-        self.discrete_heads = discrete_heads
-        self.head_dims = self.discrete_dims // discrete_heads
+        self.head_dims = head_dims
+        self.discrete_dims = discrete_dims - discrete_dims % head_dims
 
     def forward(self, x, y):
-        cont_dims = x.shape[-1] - self.head_dims * self.discrete_heads
-        dis_x = x[..., :-cont_dims]
+        cont_dims = x.shape[-1] - self.discrete_dims
+        dis_x = x[..., :self.discrete_dims]
         dis_x = dis_x.view(*dis_x.shape[:-1], -1, self.head_dims)
-        dis_y = y[..., :-cont_dims]
+        dis_y = y[..., :self.discrete_dims]
         dis_y = dis_y.view(*dis_y.shape[:-1], -1, self.head_dims)
         dis_loss = F.kl_div(dis_x, dis_y)
-        cont_x = x[..., -cont_dims:]
-        cont_y = y[..., -cont_dims:]
+        cont_x = x[..., self.discrete_dims:]
+        cont_y = y[..., self.discrete_dims:]
         cont_loss = F.mse_loss(cont_x, cont_y)
         return dis_loss + cont_loss
 
