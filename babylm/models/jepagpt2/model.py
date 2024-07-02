@@ -1743,7 +1743,7 @@ class GPT2JEPALMHeadModel(GPT2PreTrainedModel):
             output_hidden_states=output_hidden_states,
             return_dict=return_dict,
         )
-        hidden_states = self.latent_activation(transformer_outputs[0])
+        hidden_states = transformer_outputs[0]
 
         if labels is not None:
             with torch.no_grad():
@@ -1762,7 +1762,7 @@ class GPT2JEPALMHeadModel(GPT2PreTrainedModel):
                     output_hidden_states=output_hidden_states,
                     return_dict=return_dict,
                 )
-            ema_hidden_states = self.latent_activation(ema_transformer_outputs[0])
+            ema_hidden_states = ema_transformer_outputs[0]
         else:
             ema_hidden_states = None
 
@@ -1773,8 +1773,8 @@ class GPT2JEPALMHeadModel(GPT2PreTrainedModel):
             if ema_hidden_states is not None:
                 ema_hidden_states = ema_hidden_states.to(self.lm_head.weight.device)
 
-        pred_next_hidden_states = self.latent_activation(self.predict_next_latent(hidden_states))
-        lm_pred_logits = self.lm_head(pred_next_hidden_states)
+        pred_next_hidden_states = self.predict_next_latent(self.latent_activation(hidden_states))
+        lm_pred_logits = self.lm_head(self.latent_activation(pred_next_hidden_states))
 
         loss = None
         if labels is not None:
@@ -1886,7 +1886,7 @@ class HybridLoss(nn.Module):
         dis_x = dis_x.view(*dis_x.shape[:-1], -1, self.head_dims)
         dis_y = y[..., :self.discrete_dims]
         dis_y = dis_y.view(*dis_y.shape[:-1], -1, self.head_dims)
-        dis_loss = F.kl_div(dis_x, dis_y)
+        dis_loss = F.kl_div(dis_x, dis_y, log_target=True)
         cont_x = x[..., self.discrete_dims:]
         cont_y = y[..., self.discrete_dims:]
         cont_loss = F.mse_loss(cont_x, cont_y)
