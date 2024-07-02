@@ -1773,7 +1773,6 @@ class GPT2JEPALMHeadModel(GPT2PreTrainedModel):
             if ema_hidden_states is not None:
                 ema_hidden_states = ema_hidden_states.to(self.lm_head.weight.device)
 
-        print('hiddenstatesshape', hidden_states.shape)
         pred_next_hidden_states = self.latent_activation(self.predict_next_latent(hidden_states))
         lm_pred_logits = self.lm_head(pred_next_hidden_states)
 
