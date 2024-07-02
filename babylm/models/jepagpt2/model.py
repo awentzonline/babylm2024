@@ -1151,18 +1151,17 @@ class GPT2JEPALMHeadModel(GPT2PreTrainedModel):
             if ema_hidden_states is not None:
                 ema_hidden_states = ema_hidden_states.to(self.lm_head.weight.device)
 
-        pred_next_hidden_states = self.predict_next_latent(self.latent_activation(hidden_states))
+        hidden_states_activated = self.latent_activation(hidden_states)
+        pred_next_hidden_states = self.predict_next_latent(hidden_states_activated)
         lm_pred_logits = self.lm_head(self.latent_activation(pred_next_hidden_states))
 
         loss = None
         if labels is not None:
             latent_loss = self.f_latent_loss(pred_next_hidden_states[:, :-1], ema_hidden_states[:, 1:])
-            target_logits = self.lm_head(self.latent_activation(hidden_states))
-            # Shift so that tokens < n predict n
-            #shift_pred_logits = lm_pred_logits[..., :-1, :].contiguous()
-            #shift_labels = labels[..., 1:].contiguous()
+            # Get reconstruction loss
+            encoder_logits = self.lm_head(hidden_states_activated)
             # Flatten the tokens
-            recon_loss = F.cross_entropy(target_logits.view(-1, target_logits.size(-1)), labels.view(-1))
+            recon_loss = F.cross_entropy(encoder_logits.view(-1, encoder_logits.size(-1)), labels.view(-1))
             if np.random.uniform() < 0.05:
                 hs = pred_next_hidden_states[0,0]
                 print('hs', hs.min().item(), hs.mean().item(), hs.std().item(), hs.max().item())
