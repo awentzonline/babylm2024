@@ -21,6 +21,7 @@ import os
 from dataclasses import dataclass
 from typing import Optional, Tuple
 
+import numpy as np
 import torch
 import torch.utils.checkpoint
 from packaging import version
@@ -1779,7 +1780,7 @@ class GPT2JEPALMHeadModel(GPT2PreTrainedModel):
         loss = None
         if labels is not None:
             latent_loss = self.f_latent_loss(pred_next_hidden_states[..., :-1], ema_hidden_states[..., 1:])
-            target_logits = self.lm_head(ema_hidden_states)
+            target_logits = self.lm_head(self.latent_activation(hidden_states))
             # Shift so that tokens < n predict n
             #shift_pred_logits = lm_pred_logits[..., :-1, :].contiguous()
             #shift_labels = labels[..., 1:].contiguous()
@@ -1886,7 +1887,7 @@ class HybridLoss(nn.Module):
         dis_x = dis_x.view(*dis_x.shape[:-1], -1, self.head_dims)
         dis_y = y[..., :self.discrete_dims]
         dis_y = dis_y.view(*dis_y.shape[:-1], -1, self.head_dims)
-        dis_loss = F.kl_div(dis_x, dis_y, log_target=True)
+        dis_loss = F.kl_div(dis_x, dis_y, log_target=True, reduction='mean')
         cont_x = x[..., self.discrete_dims:]
         cont_y = y[..., self.discrete_dims:]
         cont_loss = F.mse_loss(cont_x, cont_y)
