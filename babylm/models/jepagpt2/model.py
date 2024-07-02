@@ -1140,7 +1140,7 @@ class GPT2JEPALMHeadModel(GPT2PreTrainedModel):
                     output_hidden_states=output_hidden_states,
                     return_dict=return_dict,
                 )
-            ema_hidden_states = ema_transformer_outputs[0]
+            ema_hidden_states = ema_transformer_outputs[0].detach()
         else:
             ema_hidden_states = None
 
@@ -1156,7 +1156,7 @@ class GPT2JEPALMHeadModel(GPT2PreTrainedModel):
 
         loss = None
         if labels is not None:
-            latent_loss = self.f_latent_loss(pred_next_hidden_states[..., :-1], ema_hidden_states[..., 1:])
+            latent_loss = self.f_latent_loss(pred_next_hidden_states[:, :-1], ema_hidden_states[:, 1:])
             target_logits = self.lm_head(self.latent_activation(hidden_states))
             # Shift so that tokens < n predict n
             #shift_pred_logits = lm_pred_logits[..., :-1, :].contiguous()
@@ -1257,7 +1257,6 @@ class HybridActivation(nn.Module):
         self.continuous_activation = L2Norm()
 
     def forward(self, x):
-        cont_dims = x.shape[-1] - self.discrete_dims
         dis_x = x[..., :self.discrete_dims]
         dis_x = self.discrete_activation(dis_x)
         cont_x = x[..., self.discrete_dims:]
@@ -1272,17 +1271,23 @@ class HybridLoss(nn.Module):
         self.discrete_dims = discrete_dims - discrete_dims % head_dims
 
     def forward(self, x, y):
-        cont_dims = x.shape[-1] - self.discrete_dims
         dis_x = x[..., :self.discrete_dims]
         dis_x = dis_x.view(*dis_x.shape[:-1], -1, self.head_dims)
         dis_y = y[..., :self.discrete_dims]
         dis_y = dis_y.view(*dis_y.shape[:-1], -1, self.head_dims)
+        dis_x = F.log_softmax(dis_x, dim=-1)
+        dis_y = F.log_softmax(dis_y, dim=-1)
         dis_loss = F.kl_div(dis_x, dis_y, log_target=True, reduction='mean').exp()
+
         cont_x = x[..., self.discrete_dims:]
         cont_y = y[..., self.discrete_dims:]
         #cont_loss = F.mse_loss(cont_x, cont_y)
         cont_loss = -F.cosine_similarity(cont_x, cont_y).mean()
         if np.random.uniform() < 0.05:
+            print(dis_x[0,0,0])
+            print(dis_y[0,0,0])
+            print(F.softmax(dis_x[0,0,0], dim=-1))
+            print(F.softmax(dis_y[0,0,0], dim=-1))
             print('dis/cont', dis_loss.item(), cont_loss.item())
         return dis_loss + cont_loss
 
