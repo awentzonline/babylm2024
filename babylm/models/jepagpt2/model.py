@@ -996,9 +996,9 @@ class GPT2JEPALMHeadModel(GPT2PreTrainedModel):
             nn.GELU(),
             nn.Linear(config.model_dims, config.model_dims),
         )
-        discrete_dims, discrete_heads = config.model_dims // 2, 8
-        self.latent_activation = HybridActivation(discrete_dims, discrete_heads)
-        self.f_latent_loss = HybridLoss(discrete_dims, discrete_heads)
+        discrete_dims, discrete_head_dims = config.model_dims // 2, 8
+        self.latent_activation = HybridActivation(discrete_dims, discrete_head_dims)
+        self.f_latent_loss = HybridLoss(discrete_dims, discrete_head_dims)
         # Model parallel
         self.model_parallel = False
         self.device_map = None
@@ -1006,7 +1006,7 @@ class GPT2JEPALMHeadModel(GPT2PreTrainedModel):
         # Initialize weights and apply final processing
         self.post_init()
         self.ema_transformer = GPT2Model(config)
-        self.ema_transformer.eval()
+        self.ema_transformer.requires_grad_(False)
         self.update_ema_transformer(1.)
 
     @torch.no_grad()
@@ -1243,7 +1243,7 @@ class L2Norm(nn.Module):
     def __init__(self, *args, eps=1e-8):
         super().__init__()
         self.eps = eps
-    
+
     def forward(self, x):
         return x / (torch.linalg.norm(x, dim=-1, keepdim=True) + self.eps)
 
