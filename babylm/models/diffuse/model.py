@@ -133,7 +133,7 @@ class VectorDiffuser(PreTrainedModel):
 
     def __init__(self, config):
         super().__init__(config)
-        self.noise_scheduler = DDIMScheduler(**asdict(config.noise_scheduler_config))
+        self.noise_scheduler = DDIMScheduler(**config.noise_scheduler_config)
         self.predict_world_tp1 = HoloDecoder(config)
         if config.position_embedding == 'learn':
             self.position_embedding = nn.Embedding(config.max_seq_len, config.model_dims)
@@ -246,9 +246,9 @@ class VectorDiffuser(PreTrainedModel):
         # (this is the forward diffusion process)
         noisy_xtp1_input = self.noise_scheduler.add_noise(x_tp1, x_tp1_noise, timesteps)
         world_inputs = torch.stack([x_t, noisy_xtp1_input])
-        world_inputs = rearrange(world_inputs, 't b s d -> b (t s) d')
+        world_inputs = rearrange(world_inputs, 't b s d -> b (s t) d')
         pred_world_tp1_noise = self.predict_world_tp1(world_inputs, labels=None)
-        pred_world_tp1_noise = rearrange(pred_world_tp1_noise, 'b (t s) ... -> t b s ...', b=bsz, s=x_tp1.shape[1], t=2)
+        pred_world_tp1_noise = rearrange(pred_world_tp1_noise, 'b (s t) ... -> t b s ...', b=bsz, s=x_tp1.shape[1], t=2)
         _, pred_world_tp1_noise = pred_world_tp1_noise
 
         if self.noise_scheduler.config.prediction_type == "epsilon":

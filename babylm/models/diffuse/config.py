@@ -16,8 +16,8 @@ class VectorDiffusionConfig(PretrainedConfig):
         model_dims: int = 768, #128,
         num_hidden_layers: int = 4,
         max_seq_len: int = 1024,
-        learn_input_embs: bool = False,
-        learn_output_embs: bool = False,
+        learn_input_embs: bool = True,
+        learn_output_embs: bool = True,
         attention_class: str = 'hrr',
         initializer_range: float = 0.2,
         rezero: bool = False,
@@ -46,9 +46,25 @@ class VectorDiffusionConfig(PretrainedConfig):
         self.position_embedding = position_embedding
         self.f_attn = f_attn
 
-        self.noise_scheduler_config = {} if noise_scheduler_config is None else noise_scheduler_config
-        if not isinstance(self.noise_scheduler_config, DDIMSchedulerConfig):
-            self.noise_scheduler_config = DDIMSchedulerConfig(**self.noise_scheduler_config)
+        self.noise_scheduler_config = dict(
+            num_train_timesteps=1000,
+            beta_start= 0.0001,
+            beta_end= 0.02,
+            beta_schedule="linear",
+            trained_betas=None,
+            clip_sample = True,
+            set_alpha_to_one = True,
+            steps_offset = 0,
+            prediction_type = "epsilon",
+            thresholding = False,
+            dynamic_thresholding_ratio = 0.995,
+            clip_sample_range = 1.0,
+            sample_max_value = 1.0,
+            timestep_spacing = "leading",
+            rescale_betas_zero_snr = False,
+        )
+        if noise_scheduler_config is not None:
+            self.noise_scheduler_config.update(noise_scheduler_config)
         super().__init__(**kwargs)
 
 
