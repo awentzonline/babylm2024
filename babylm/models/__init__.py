@@ -6,3 +6,4 @@ from .hf_vanilla.config import HFVanConfig
 from .hf_vanilla.model import HFVan
 from .jepagpt2.config import JEPAGPT2Config
 from .jepagpt2.model import GPT2JEPALMHeadModel
+from .diffuse import VectorDiffuser, VectorDiffusionConfig
