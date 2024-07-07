@@ -233,36 +233,59 @@ class VectorDiffuser(PreTrainedModel):
         x_t = all_x[:, :-1].contiguous()
         x_tp1 = input_embs[:, 1:].contiguous()
         x_tp1_noise = randn_tensor(x_tp1.shape[1:], generator=None, device=self.device, dtype=self.dtype)
-
-        # Sample a random timestep for each sequence
         bsz = x_t.shape[0]
-        timesteps = torch.randint(
-            0, self.noise_scheduler.config.num_train_timesteps, (bsz,), device=self.device, dtype=torch.long
-        )
-        time_embs = self.timestep_embedding(timesteps).unsqueeze(1)
-        x_t = x_t + time_embs
 
-        # Add noise to the model input according to the noise magnitude at each timestep
-        # (this is the forward diffusion process)
-        noisy_xtp1_input = self.noise_scheduler.add_noise(x_tp1, x_tp1_noise, timesteps)
-        world_inputs = torch.stack([x_t, noisy_xtp1_input])
-        world_inputs = rearrange(world_inputs, 't b s d -> b (s t) d')
-        pred_world_tp1_noise = self.predict_world_tp1(world_inputs, labels=None)
-        pred_world_tp1_noise = rearrange(pred_world_tp1_noise, 'b (s t) ... -> t b s ...', b=bsz, s=x_tp1.shape[1], t=2)
-        _, pred_world_tp1_noise = pred_world_tp1_noise
-
-        if self.noise_scheduler.config.prediction_type == "epsilon":
-            world_tp1_noise_target = x_tp1_noise
-        elif self.noise_scheduler.config.prediction_type == "v_prediction":
-            world_tp1_noise_target = self.noise_scheduler.get_velocity(x_tp1, x_tp1_noise, timesteps)
+        loss = None
+        # Training is very different from generating so `forward`` has to do a lot to fit in with the other frameworks
+        if labels is None:
+            # generate
+            print('generate')
+            self.noise_scheduler.set_timesteps(num_inference_steps)
+            for t in range(self.noise_scheduler.timesteps):
+                timesteps = torch.LongTensor([[t]])
+                time_embs = self.timestep_embedding(timesteps).unsqueeze(1)
+                x_t_t = x_t + time_embs
+                world_inputs = torch.stack([x_t_t, noisy_xtp1_input])
+                world_inputs = rearrange(world_inputs, 't b s d -> b (s t) d')
+                pred_world_tp1_noise = self.predict_world_tp1(world_inputs, labels=None)
+                pred_world_tp1_noise = rearrange(pred_world_tp1_noise, 'b (s t) ... -> t b s ...', b=bsz, s=x_tp1.shape[1], t=2)
+                _, pred_world_tp1_noise = pred_world_tp1_noise
+                x_tp1_noise = self.scheduler.step(
+                    pred_world_tp1_noise, t, x_tp1_noise, eta=eta, use_clipped_model_output=False, generator=None,
+                ).prev_sample
+            logits = self.predict_token(x_tp1_noise)
         else:
-            raise ValueError(f"Unknown prediction type {self.noise_scheduler.config.prediction_type}")
+            # train a transformer that predicts noise in next step token
+            # Sample a random timestep for each sequence
+            timesteps = torch.randint(
+                0, self.noise_scheduler.config.num_train_timesteps, (bsz,), device=self.device, dtype=torch.long
+            )
+            time_embs = self.timestep_embedding(timesteps).unsqueeze(1)
+            x_t = x_t + time_embs
 
-        world_tp1_loss = F.mse_loss(pred_world_tp1_noise, world_tp1_noise_target.unsqueeze(0).repeat(bsz, 1, 1))
+            # Add noise to the model input according to the noise magnitude at each timestep
+            # (this is the forward diffusion process)
+            noisy_xtp1_input = self.noise_scheduler.add_noise(x_tp1, x_tp1_noise, timesteps)
+            world_inputs = torch.stack([x_t, noisy_xtp1_input])
+            world_inputs = rearrange(world_inputs, 't b s d -> b (s t) d')
+            pred_world_tp1_noise = self.predict_world_tp1(world_inputs, labels=None)
+            pred_world_tp1_noise = rearrange(pred_world_tp1_noise, 'b (s t) ... -> t b s ...', b=bsz, s=x_tp1.shape[1], t=2)
+            _, pred_world_tp1_noise = pred_world_tp1_noise
 
-        logits = self.predict_token(input_embs)
-        decode_x_loss = F.cross_entropy(logits.view(-1, logits.shape[-1]), input_ids.view(-1))
-        loss = world_tp1_loss + decode_x_loss
+            if self.noise_scheduler.config.prediction_type == "epsilon":
+                world_tp1_noise_target = x_tp1_noise
+            elif self.noise_scheduler.config.prediction_type == "v_prediction":
+                world_tp1_noise_target = self.noise_scheduler.get_velocity(x_tp1, x_tp1_noise, timesteps)
+            else:
+                raise ValueError(f"Unknown prediction type {self.noise_scheduler.config.prediction_type}")
+
+            world_tp1_loss = F.mse_loss(pred_world_tp1_noise, world_tp1_noise_target.unsqueeze(0).repeat(bsz, 1, 1))
+
+            # train a model to decode tokens from the input embeddings
+            logits = self.predict_token(input_embs)
+            decode_x_loss = F.cross_entropy(logits.view(-1, logits.shape[-1]), input_ids.view(-1))
+
+            loss = world_tp1_loss + decode_x_loss
 
         # if not return_dict:
         #     return (vectors,)
