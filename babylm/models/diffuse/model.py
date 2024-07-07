@@ -45,8 +45,9 @@ class HRRSelfAttention(nn.Module):
             q = q.view(batch_size, seq_len, self.num_heads, self.head_dims)
             k = k.view(batch_size, seq_len, self.num_heads, self.head_dims)
             v = v.view(batch_size, seq_len, self.num_heads, self.head_dims)
-        q, k, v = map(self.norm, (q, k, v))
-        values_hat = hrr.key_value_query_lin(k, v, q, causal=causal, norm=False)
+        # q, k, v = map(self.norm, (q, k, v))
+        #values_hat = hrr.key_value_query_lin(k, v, q, causal=causal, norm=False)
+        values_hat = hrr.key_value_query(k, v, q, causal=causal, norm=False)
         if self.num_heads > 1:
             values_hat = values_hat.view(batch_size, seq_len, self.model_dims)
         return self.output(values_hat)
@@ -77,9 +78,9 @@ class HoloLayer(nn.Module):
         self.mlp = MLP(model_dims)
         self.num_layers = num_layers
 
-        self.norm_attn = nn.Identity()
+        # self.norm_attn = nn.Identity()
         # self.norm_mlp = nn.Identity()
-        # self.norm_attn = Normalize()
+        self.norm_attn = Normalize()
         self.norm_mlp = Normalize()
         # self.norm_attn = nn.LayerNorm(model_dims, bias=use_norm_bias)
         # self.norm_mlp = nn.LayerNorm(model_dims, bias=use_norm_bias)
@@ -230,31 +231,34 @@ class VectorDiffuser(PreTrainedModel):
         position_ids = position_ids[None, :].repeat(input_embs.shape[0], 1)
         positions = self.position_embedding(position_ids)
         all_x = input_embs + positions
-        x_t = all_x[:, :-1].contiguous()
-        x_tp1 = input_embs[:, 1:].contiguous()
-        x_tp1_noise = randn_tensor(x_tp1.shape[1:], generator=None, device=self.device, dtype=self.dtype)
-        bsz = x_t.shape[0]
+        x_tp1 = input_embs
+        bsz = all_x.shape[0]
 
         loss = None
         # Training is very different from generating so `forward`` has to do a lot to fit in with the other frameworks
         if labels is None:
             # generate
-            print('generate')
+            x_t = all_x
+            x_tp1_noise = randn_tensor(x_tp1.shape, generator=None, device=self.device, dtype=self.dtype)
             self.noise_scheduler.set_timesteps(num_inference_steps)
-            for t in range(self.noise_scheduler.timesteps):
-                timesteps = torch.LongTensor([[t]])
+            for t in self.noise_scheduler.timesteps:
+                timesteps = torch.LongTensor([t]).to(self.device)
                 time_embs = self.timestep_embedding(timesteps).unsqueeze(1)
                 x_t_t = x_t + time_embs
-                world_inputs = torch.stack([x_t_t, noisy_xtp1_input])
+                world_inputs = torch.stack([x_t_t, x_tp1_noise])
                 world_inputs = rearrange(world_inputs, 't b s d -> b (s t) d')
                 pred_world_tp1_noise = self.predict_world_tp1(world_inputs, labels=None)
                 pred_world_tp1_noise = rearrange(pred_world_tp1_noise, 'b (s t) ... -> t b s ...', b=bsz, s=x_tp1.shape[1], t=2)
                 _, pred_world_tp1_noise = pred_world_tp1_noise
-                x_tp1_noise = self.scheduler.step(
+                x_tp1_noise = self.noise_scheduler.step(
                     pred_world_tp1_noise, t, x_tp1_noise, eta=eta, use_clipped_model_output=False, generator=None,
                 ).prev_sample
+            #logits = self.predict_token(F.normalize(x_tp1_noise, dim=-1))
             logits = self.predict_token(x_tp1_noise)
         else:
+            x_tp1 = x_tp1[:, 1:].contiguous()
+            x_t = all_x[:, :-1].contiguous()
+            x_tp1_noise = randn_tensor(x_tp1.shape, generator=None, device=self.device, dtype=self.dtype)
             # train a transformer that predicts noise in next step token
             # Sample a random timestep for each sequence
             timesteps = torch.randint(
@@ -262,7 +266,6 @@ class VectorDiffuser(PreTrainedModel):
             )
             time_embs = self.timestep_embedding(timesteps).unsqueeze(1)
             x_t = x_t + time_embs
-
             # Add noise to the model input according to the noise magnitude at each timestep
             # (this is the forward diffusion process)
             noisy_xtp1_input = self.noise_scheduler.add_noise(x_tp1, x_tp1_noise, timesteps)
@@ -279,11 +282,16 @@ class VectorDiffuser(PreTrainedModel):
             else:
                 raise ValueError(f"Unknown prediction type {self.noise_scheduler.config.prediction_type}")
 
-            world_tp1_loss = F.mse_loss(pred_world_tp1_noise, world_tp1_noise_target.unsqueeze(0).repeat(bsz, 1, 1))
+            world_tp1_loss = F.mse_loss(pred_world_tp1_noise, world_tp1_noise_target)
 
             # train a model to decode tokens from the input embeddings
+            # logits = self.predict_token(F.normalize(input_embs, dim=-1))
+            # input_embs = self.noise_scheduler.add_noise(x_tp1, x_tp1_noise, timesteps)
             logits = self.predict_token(input_embs)
-            decode_x_loss = F.cross_entropy(logits.view(-1, logits.shape[-1]), input_ids.view(-1))
+            decode_x_loss = F.cross_entropy(
+                logits.view(-1, logits.shape[-1]),
+                input_ids.view(-1)  # [:, 1:].contiguous().view(-1)
+            )
 
             loss = world_tp1_loss + decode_x_loss
 
