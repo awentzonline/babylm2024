@@ -427,23 +427,22 @@ class VectorDiffuserSimple(VectorDiffuser):
         # Training is very different from generating so `forward`` has to do a lot to fit in with the other frameworks
         if labels is None:
             # generate
-            x_t = all_x
-            x_tp1_noise = randn_tensor(x_tp1.shape, generator=None, device=self.device, dtype=self.dtype)
+            x_tp1_noise = randn_tensor((bsz, 1, x.shape[-1]), generator=None, device=self.device, dtype=self.dtype)
+            position_embs = self.position_embedding(x.shape[1])[None, ...]
+            x_tp1_noise = x_tp1_noise + position_embs
             self.noise_scheduler.set_timesteps(num_inference_steps)
             for t in self.noise_scheduler.timesteps:
                 timesteps = torch.LongTensor([t]).to(self.device)
                 time_embs = self.timestep_embedding(timesteps).unsqueeze(1)
-                x_t_t = x_t + time_embs
-                world_inputs = torch.stack([x_t_t, x_tp1_noise])
-                world_inputs = rearrange(world_inputs, 't b s d -> b (s t) d')
-                pred_world_tp1_noise = self.predict_world_tp1(world_inputs, labels=None)
-                pred_world_tp1_noise = rearrange(pred_world_tp1_noise, 'b (s t) ... -> t b s ...', b=bsz, s=x_tp1.shape[1], t=2)
-                _, pred_world_tp1_noise = pred_world_tp1_noise
+                x_t = x + time_embs
+                world_inputs = torch.concatenate([x_t, x_tp1_noise], dim=1)
+                pred_world_tp1_noise = self.predict_world_tp1(world_inputs, labels=None)[:, -1]
                 x_tp1_noise = self.noise_scheduler.step(
                     pred_world_tp1_noise, t, x_tp1_noise, eta=eta, use_clipped_model_output=False, generator=None,
                 ).prev_sample
             #logits = self.predict_token(F.normalize(x_tp1_noise, dim=-1))
-            logits = self.predict_token(x_tp1_noise)
+            world_inputs = torch.concatenate([x_t, x_tp1_noise], dim=1)
+            logits = self.predict_token(world_inputs)
         else:
             # Sample a random timestep for each sequence
             timesteps = torch.randint(
@@ -475,10 +474,6 @@ class VectorDiffuserSimple(VectorDiffuser):
             )
 
             loss = world_tp1_loss + decode_x_loss
-
-        # if not return_dict:
-        #     return (vectors,)
-        # return VectorPipelineOutput(vectors=vectors)
 
         if return_dict is not None and not return_dict:
             output = (logits,)# feats)
