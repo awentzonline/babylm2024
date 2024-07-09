@@ -141,6 +141,7 @@ class VectorDiffuser(PreTrainedModel):
         elif config.position_embedding == 'sin':
             self.position_embedding = PositionalEncoding(config.model_dims, config.max_seq_len)
         self.input_embedding = nn.Embedding(config.vocab_size, config.model_dims)
+        # diffusion timestep
         self.timestep_embedding = nn.Embedding(self.noise_scheduler.config.num_train_timesteps, config.model_dims)
 
         self.predict_token = mup.MuReadout(config.model_dims, config.vocab_size, bias=False)
@@ -265,11 +266,11 @@ class VectorDiffuser(PreTrainedModel):
                 0, self.noise_scheduler.config.num_train_timesteps, (bsz,), device=self.device, dtype=torch.long
             )
             time_embs = self.timestep_embedding(timesteps).unsqueeze(1)
-            x_t = x_t + time_embs
+            x_t_t = x_t + time_embs
             # Add noise to the model input according to the noise magnitude at each timestep
             # (this is the forward diffusion process)
             noisy_xtp1_input = self.noise_scheduler.add_noise(x_tp1, x_tp1_noise, timesteps)
-            world_inputs = torch.stack([x_t, noisy_xtp1_input])
+            world_inputs = torch.stack([x_t_t, noisy_xtp1_input])
             world_inputs = rearrange(world_inputs, 't b s d -> b (s t) d')
             pred_world_tp1_noise = self.predict_world_tp1(world_inputs, labels=None)
             pred_world_tp1_noise = rearrange(pred_world_tp1_noise, 'b (s t) ... -> t b s ...', b=bsz, s=x_tp1.shape[1], t=2)
@@ -384,14 +385,114 @@ class VectorDiffuser(PreTrainedModel):
             delta_config = VectorDiffusionConfig(
                 **delta_kwargs
             )
-            base_model = VectorDiffuser(config=base_config)
-            delta_model = VectorDiffuser(config=delta_config)
+            base_model = cls(config=base_config)
+            delta_model = cls(config=delta_config)
             base_shapes = mup.make_base_shapes(base_model, delta_model, savefile=filename)
             cls._mup_base_shapes = base_shapes
             del base_model
             del delta_model
             base_model = delta_model = None
         return cls._mup_base_shapes
+
+
+class VectorDiffuserSimple(VectorDiffuser):
+    def forward(
+        self,
+        input_ids: Optional = None,
+        attention_mask: Optional = None,
+        token_type_ids: Optional = None,
+        position_ids: Optional = None,
+        head_mask: Optional = None,
+        inputs_embeds: Optional = None,
+        encoder_hidden_states: Optional = None,
+        encoder_attention_mask: Optional = None,
+        labels: Optional = None,
+        past_key_values: Optional = None,
+        use_cache: Optional = None,
+        output_attentions: Optional = None,
+        output_hidden_states: Optional = None,
+        return_dict: Optional = None,
+        num_inference_steps: int = 50,
+        eta: float = 0.,
+    ):
+        input_embs = self.input_embedding(input_ids)
+        position_ids = torch.arange(input_embs.shape[1]).long().to(input_embs.device)
+        position_ids = position_ids[None, :].repeat(input_embs.shape[0], 1)
+        position_embs = self.position_embedding(position_ids)
+        x = input_embs + position_embs
+        bsz = x.shape[0]
+        noise = randn_tensor(x.shape, generator=None, device=self.device, dtype=self.dtype)
+
+        loss = None
+        # Training is very different from generating so `forward`` has to do a lot to fit in with the other frameworks
+        if labels is None:
+            # generate
+            x_t = all_x
+            x_tp1_noise = randn_tensor(x_tp1.shape, generator=None, device=self.device, dtype=self.dtype)
+            self.noise_scheduler.set_timesteps(num_inference_steps)
+            for t in self.noise_scheduler.timesteps:
+                timesteps = torch.LongTensor([t]).to(self.device)
+                time_embs = self.timestep_embedding(timesteps).unsqueeze(1)
+                x_t_t = x_t + time_embs
+                world_inputs = torch.stack([x_t_t, x_tp1_noise])
+                world_inputs = rearrange(world_inputs, 't b s d -> b (s t) d')
+                pred_world_tp1_noise = self.predict_world_tp1(world_inputs, labels=None)
+                pred_world_tp1_noise = rearrange(pred_world_tp1_noise, 'b (s t) ... -> t b s ...', b=bsz, s=x_tp1.shape[1], t=2)
+                _, pred_world_tp1_noise = pred_world_tp1_noise
+                x_tp1_noise = self.noise_scheduler.step(
+                    pred_world_tp1_noise, t, x_tp1_noise, eta=eta, use_clipped_model_output=False, generator=None,
+                ).prev_sample
+            #logits = self.predict_token(F.normalize(x_tp1_noise, dim=-1))
+            logits = self.predict_token(x_tp1_noise)
+        else:
+            # Sample a random timestep for each sequence
+            timesteps = torch.randint(
+                0, self.noise_scheduler.config.num_train_timesteps, (bsz,), device=self.device, dtype=torch.long
+            )
+            time_embs = self.timestep_embedding(timesteps).unsqueeze(1)
+            x_t = x + time_embs
+            # Add noise to the model input according to the noise magnitude at each timestep
+            # (this is the forward diffusion process)
+            noisy_x = self.noise_scheduler.add_noise(x_t, noise, timesteps)
+            pred_world_tp1_noise = self.predict_world_tp1(noisy_x, labels=None)
+
+            if self.noise_scheduler.config.prediction_type == "epsilon":
+                world_tp1_noise_target = noise
+            elif self.noise_scheduler.config.prediction_type == "v_prediction":
+                world_tp1_noise_target = self.noise_scheduler.get_velocity(x_t, noise, timesteps)
+            else:
+                raise ValueError(f"Unknown prediction type {self.noise_scheduler.config.prediction_type}")
+
+            world_tp1_loss = F.mse_loss(pred_world_tp1_noise, world_tp1_noise_target)
+
+            # train a model to decode tokens from the input embeddings
+            # logits = self.predict_token(F.normalize(input_embs, dim=-1))
+            # input_embs = self.noise_scheduler.add_noise(x_tp1, x_tp1_noise, timesteps)
+            logits = self.predict_token(input_embs)
+            decode_x_loss = F.cross_entropy(
+                logits.view(-1, logits.shape[-1]),
+                input_ids.view(-1)  # [:, 1:].contiguous().view(-1)
+            )
+
+            loss = world_tp1_loss + decode_x_loss
+
+        # if not return_dict:
+        #     return (vectors,)
+        # return VectorPipelineOutput(vectors=vectors)
+
+        if return_dict is not None and not return_dict:
+            output = (logits,)# feats)
+            output = (loss,) + output if loss else output
+            return output
+
+        return CausalLMOutputWithCrossAttentions(
+            loss=loss,
+            logits=logits,
+            past_key_values=None,  # transformer_outputs.past_key_values,
+            # hidden_states=feats,
+            attentions=None,  # transformer_outputs.attentions,
+            cross_attentions=None,  # transformer_outputs.cross_attentions,
+        )
 
 
 class PositionalEncoding(nn.Module):
@@ -411,7 +512,7 @@ class PositionalEncoding(nn.Module):
         return self.pe[:, :x.size(1)]
 
 
-VectorDiffuser.register_for_auto_class("AutoModel")
-VectorDiffuser.register_for_auto_class("AutoModelForCausalLM")
+VectorDiffuserSimple.register_for_auto_class("AutoModel")
+VectorDiffuserSimple.register_for_auto_class("AutoModelForCausalLM")
 AutoModel.register(VectorDiffusionConfig, HoloDecoder)
-AutoModelForCausalLM.register(VectorDiffusionConfig, VectorDiffuser)
+AutoModelForCausalLM.register(VectorDiffusionConfig, VectorDiffuserSimple)
