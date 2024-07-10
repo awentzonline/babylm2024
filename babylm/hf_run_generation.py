@@ -28,7 +28,7 @@ from accelerate import PartialState
 from accelerate.utils import set_seed
 import mup
 
-from babylm.models import HFHolo, HFVan, VectorDiffuser  # HACK: register my models
+from babylm.models import HFHolo, HFVan, VectorDiffuser, HRRDiffuser  # HACK: register my models
 
 from transformers import (
     AutoTokenizer,
@@ -78,6 +78,7 @@ MODEL_CLASSES = {
     "holo": (HFHolo, GPT2Tokenizer),
     "vanilla": (HFVan, GPT2Tokenizer),
     "vecdiff": (VectorDiffuser, GPT2Tokenizer),
+    "hrrdiff": (HRRDiffuser, GPT2Tokenizer),
 }
 
 # Padding text to help Transformer-XL and XLNet with short prompts as proposed by Aman Rusia

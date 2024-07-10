@@ -259,22 +259,22 @@ class HRRDiffuser(PreTrainedModel):
         # Training is very different from generating so `forward`` has to do a lot to fit in with the other frameworks
         if labels is None:
             # generate
-            time_embs = self.timestep_embedding(torch.LongTensor(0, device=self.device))
+            time_embs = self.timestep_embedding(torch.LongTensor(0).to(self.device))
             x = x + position_embs
             x_tp1_noise = randn_tensor((bsz, 1, x.shape[-1]), generator=None, device=self.device, dtype=self.dtype)
-            x_tp1_position_embs = self.position_embedding(x.shape[1])[None, ...]
+            x_tp1_position_embs = self.position_embedding(torch.LongTensor([x.shape[1]]).to(self.device))[None, ...]
             self.noise_scheduler.set_timesteps(num_inference_steps)
             for t in self.noise_scheduler.timesteps:
                 timesteps = torch.LongTensor([t]).to(self.device)
                 time_embs = self.timestep_embedding(timesteps).unsqueeze(1)
                 conditions = time_embs
                 x_tp1_noise = x_tp1_noise + x_tp1_position_embs
-                x_inputs = torch.concatenate([x_t, x_tp1_noise], dim=1)
+                x_inputs = torch.concatenate([x, x_tp1_noise], dim=1)
                 pred_x_tp1_noise = self.decoder(x_inputs, conditions, labels=None)[:, -1]
                 x_tp1_noise = self.noise_scheduler.step(
                     pred_x_tp1_noise, t, x_tp1_noise, eta=eta, use_clipped_model_output=False, generator=None,
                 ).prev_sample
-            x_inputs = torch.concatenate([x_t, x_tp1_noise], dim=1)
+            x_inputs = torch.concatenate([x, x_tp1_noise], dim=1)
             logits = self.predict_token(x_inputs)
         else:
             # Sample a random timestep for each sequence
