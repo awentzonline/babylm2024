@@ -178,7 +178,7 @@ class HRRDiffuser(PreTrainedModel):
     def _init_weights(self, module):
         module.apply(self._init_module)
 
-    def _init_module(self, module, readout_zero_init=False, query_zero_init=False):
+    def _init_module(self, module, readout_zero_init=True, query_zero_init=False):
         if isinstance(module, mup.MuReadout) and readout_zero_init:
             module.weight.data.zero_()
         elif isinstance(module, (nn.Linear, nn.Conv1d)):

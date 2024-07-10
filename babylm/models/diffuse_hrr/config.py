@@ -28,6 +28,7 @@ class HRRDiffusionConfig(PretrainedConfig):
         position_embedding: str = 'learn',
         f_attn: Callable = None,
         noise_scheduler_config: dict = None,
+        tie_word_embeddings: bool = False,
         **kwargs
     ):
         self.vocab_size = vocab_size
@@ -45,6 +46,7 @@ class HRRDiffusionConfig(PretrainedConfig):
         self.hrr_embedding = hrr_embedding
         self.position_embedding = position_embedding
         self.f_attn = f_attn
+        self.tie_word_embeddings = tie_word_embeddings
 
         self.noise_scheduler_config = dict(
             num_train_timesteps=1000,
