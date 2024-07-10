@@ -12,7 +12,7 @@ import torch.nn.functional as F
 from transformers import AutoModel, AutoModelForCausalLM, PreTrainedModel
 from transformers.modeling_outputs import CausalLMOutputWithCrossAttentions
 
-from babylm.models.diffuse.config import HRRDiffusionConfig
+from babylm.models.diffuse_hrr.config import HRRDiffusionConfig
 from babylm.models.hf_holo import hrr
 
 
@@ -64,26 +64,24 @@ class HRRSelfAttention(nn.Module):
 
 
 class MLP(nn.Module):
-    def __init__(self, model_dims, ff_dims=None, dropout=0.):
+    def __init__(self, model_dims, ff_dims=None):
         super().__init__()
         ff_dims = ff_dims or model_dims * 4
         self.net = nn.Sequential(
             nn.Linear(model_dims, ff_dims, bias=False),
-            nn.Dropout(dropout),
             nn.GELU(),
         )
         # move output to its own thing so we can target it for initialization
         self.output = nn.Linear(ff_dims, model_dims, bias=False)
-        self.dropout_output = nn.Dropout(dropout)
-
+        
     def forward(self, x):
-        return self.dropout_output(self.output(self.net(x)))
+        return self.output(self.net(x))
 
 
 class HoloLayer(nn.Module):
     def __init__(
         self, model_dims, rezero=False, attention_class=HRRSelfAttention,
-        use_norm_bias=False, num_heads=8,
+        use_norm_bias=False, num_heads=8, **_
     ):
         super().__init__()
         self.self_attention = attention_class(model_dims, num_heads=num_heads)
@@ -205,7 +203,8 @@ class HRRDiffuser(PreTrainedModel):
         elif isinstance(module, nn.LayerNorm):
             if module.bias is not None:
                 module.bias.data.zero_()
-            module.weight.data.fill_(1.0)
+            if module.weight is not None:
+                module.weight.data.fill_(1.0)
 
         for layer in self.decoder.layers:
             nn.init.constant_(layer.adaln_modulation[-1].weight, 0.)
