@@ -79,9 +79,12 @@ def key_value_query(
     k, v, inv_q = fft(k), fft(v), fft(q)
     if norm:
         eps = 1e-8
-        k = k / (torch.norm(k, dim=-1, keepdim=True) + eps)
-        v = v / (torch.norm(v, dim=-1, keepdim=True) + eps)
-        inv_q = inv_q / (torch.norm(inv_q, dim=-1, keepdim=True) + eps)
+        # k = k / (torch.norm(k, dim=-1, keepdim=True) + eps)
+        # v = v / (torch.norm(v, dim=-1, keepdim=True) + eps)
+        # inv_q = inv_q / (torch.norm(inv_q, dim=-1, keepdim=True) + eps)
+        k = k / (k.abs() + eps)
+        v = v / (v.abs() + eps)
+        inv_q = inv_q / (inv_q.abs() + eps)
     kv = torch.multiply(k, v)
     if causal:
         r = kv.cumsum(dim=1) #* kv.shape[-1] / kv.shape[-2]
@@ -93,6 +96,19 @@ def key_value_query(
     #     eps = 1e-8
     #     qv = qv / (torch.norm(qv, dim=-1, keepdim=True) + eps)
 
+    return qv
+
+
+def key_value_query_lin(
+    k: torch.Tensor, v: torch.Tensor, q: torch.Tensor,
+    causal: bool = True, norm: bool = True
+):
+    k, v, q = fft(k), fft(v), fft(q)
+    kv = torch.multiply(k, v)
+    kvt = kv.cumsum(dim=1)
+    z = q * k.cumsum(dim=-1)
+    # unbind values for each query
+    qv = ifft(kvt * q / (1e-8 + torch.norm(z))) #, dim=-1, keepdim=True)))
     return qv
 
 

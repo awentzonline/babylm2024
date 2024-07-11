@@ -10,6 +10,7 @@ from transformers.modeling_outputs import CausalLMOutputWithCrossAttentions
 
 from babylm.models.hf_holo import hrr
 from babylm.models.hf_holo.config import HFHoloConfig
+from babylm.models.hf_vanilla.model import VanAttention
 
 
 class Abs(nn.Module):
@@ -59,7 +60,7 @@ class HRRSelfAttention(nn.Module):
         # self.keys = nn.Linear(self.head_dims, self.head_dims, bias=False)
         # self.values = nn.Linear(self.head_dims, self.head_dims, bias=False)
         self.output = nn.Linear(model_dims, model_dims, bias=False)
-
+        self.dropout = nn.Dropout(0.1)
         self.precum = nn.Identity()
         self.postcum = nn.Identity()
 
@@ -79,13 +80,13 @@ class HRRSelfAttention(nn.Module):
         # kvt = self.kvt(kv.cumsum(-2))
         # kvt = self.postcum(kvt)
         # values_hat = hrr.unbind(kvt, q)
-        values_hat = hrr.key_value_query(k, v, q, causal=causal, norm=False)
+        values_hat = hrr.key_value_query_lin(k, v, q, causal=causal, norm=False)
         if self.num_heads > 1:
             values_hat = values_hat.view(batch_size, seq_len, self.model_dims)
         # values_hat = hrr.unit_projection(values_hat)
         # values_hat = values_hat / (2 * v.shape[-1] ** 2)
-        # return values_hat
-        return self.output(values_hat)
+        #return values_hat
+        return self.dropout(self.output(values_hat))
 
 
 class HRRSimpleSelfAttention(nn.Module):
@@ -110,11 +111,14 @@ class HRRSimpleSelfAttention(nn.Module):
             q = q.view(batch_size, seq_len, self.num_heads, self.head_dims)
             kv = kv.view(batch_size, seq_len, self.num_heads, self.head_dims)
         q, kv = hrr.fft(q), hrr.fft(kv)
+        q = q / torch.norm(q, dim=-1, keepdim=True)
+        kv = kv / torch.norm(kv, dim=-1, keepdim=True)
         if causal:
             kv = torch.cumsum(kv, dim=1)
         else:
             kv = torch.sum(kv, dim=1, keepdim=True)
         qv = q * kv
+        qv = qv
         values_hat = hrr.ifft(qv)
         if self.num_heads > 1:
             values_hat = values_hat.view(batch_size, seq_len, self.model_dims)
@@ -133,23 +137,31 @@ class HRRBindingSelfAttention(nn.Module):
         self.num_heads = num_heads
         assert model_dims % num_heads == 0, f'Num heads ({num_heads}) incompatible with model dims ({model_dims})'
         self.head_dims = model_dims // num_heads
+        # self.queries = nn.Parameter(
+        #     hrr.init((1, 1, model_dims)), requires_grad=True
+        # )
+        # self.keyvalues = nn.Parameter(
+        #     hrr.init((1, 1, model_dims)), requires_grad=True
+        # )
         self.queries = nn.Parameter(
-            hrr.init(1, 1, model_dims), requires_grad=True
+            torch.randn((1, 1, self.model_dims // 2 + 1)), requires_grad=True
         )
         self.keyvalues = nn.Parameter(
-            hrr.init(1, 1, model_dims), requires_grad=True
+            torch.randn((1, 1, self.model_dims // 2 + 1)), requires_grad=True
         )
         self.output = nn.Linear(model_dims, model_dims, bias=False)
 
     def forward(self, x, causal=True, mask=None):
         batch_size, seq_len = x.shape[:2]
-        vq, vkv = hrr.fft(self.queries), hrr.fft(self.keyvalues)
+        #vq, vkv = hrr.fft(self.queries), hrr.fft(self.keyvalues)
+        vq, vkv = self.queries, self.keyvalues
+        if self.num_heads > 1:
+            x = x.view(batch_size, seq_len, self.num_heads, self.head_dims)
+            vq = vq.view(batch_size, seq_len, self.num_heads, self.head_dims)
+            vkv = vkv.view(batch_size, seq_len, self.num_heads, self.head_dims)
         xhat = hrr.fft(x)
         q = xhat * vq
-        kv = xhat * vkv
-        if self.num_heads > 1:
-            q = q.view(batch_size, seq_len, self.num_heads, self.head_dims)
-            kv = kv.view(batch_size, seq_len, self.num_heads, self.head_dims)
+        kv = xhat * vkv    
         if causal:
             kv = torch.cumsum(kv, dim=1)
         else:
@@ -235,13 +247,15 @@ class MLP(nn.Module):
         ff_dims = ff_dims or model_dims * 4
         self.net = nn.Sequential(
             nn.Linear(model_dims, ff_dims, bias=False),
-            Abs(),  # nn.GELU(),
+            # Abs(),
+            nn.GELU(),
         )
         # move output to its own thing so we can target it for initialization
+        self.dropout = nn.Dropout(0.1)
         self.output = nn.Linear(ff_dims, model_dims, bias=False)
 
     def forward(self, x):
-        return self.output(self.net(x))
+        return self.dropout(self.output(self.net(x)))
 
 
 class HoloLayer(nn.Module):
@@ -251,7 +265,7 @@ class HoloLayer(nn.Module):
     ):
         super().__init__()
         self.self_attention = attention_class(model_dims, num_heads=num_heads)
-        self.mlp = MLP(model_dims)
+        #self.mlp = MLP(model_dims)
         self.num_layers = num_layers
 
         if rezero:
@@ -259,15 +273,20 @@ class HoloLayer(nn.Module):
             self.norm_mlp = nn.Identity()
             self.gain = nn.Parameter(torch.zeros(1))
         else:
-            self.norm_attn = nn.LayerNorm(model_dims, bias=use_norm_bias)
-            self.norm_mlp = nn.LayerNorm(model_dims, bias=use_norm_bias)
-            self.gain = 1. / np.sqrt(2 * num_layers)
+            # self.norm_attn = nn.Identity()
+            # self.norm_mlp = nn.Identity()
+            self.norm_attn = HRRLayerNorm(model_dims)
+            #self.norm_mlp = HRRLayerNorm(model_dims)
+            # self.norm_attn = nn.LayerNorm(model_dims, bias=use_norm_bias)
+            # self.norm_mlp = nn.LayerNorm(model_dims, bias=use_norm_bias)
+            self.gain = 1.# / np.sqrt(num_layers)
 
     def forward(self, x, mask=None, labels=None):
         values_attn = self.self_attention(self.norm_attn(x), causal=True)
-        x = x + self.gain * torch.abs(values_attn)
-        values_mlp = self.mlp(self.norm_mlp(x))
-        x = x + self.gain * torch.abs(values_mlp)
+        x = x + self.gain * values_attn # torch.abs(values_attn)
+        #x = x + 1. * values_attn # torch.abs(values_attn)
+        #values_mlp = self.mlp(self.norm_mlp(x))
+        #x = x + self.gain * values_mlp #torch.abs(values_mlp)
         return x
 
 
@@ -282,6 +301,8 @@ class HoloDecoder(PreTrainedModel):
             hrr=HRRSelfAttention,
             rhrr=RedundantHRRSelfAttention,
             bhrr=HRRBindingSelfAttention,
+            shrr=HRRSimpleSelfAttention,
+            van=VanAttention,
         )[config.attention_class]
 
         self.layers = nn.ModuleList([
@@ -315,7 +336,7 @@ class HFHolo(PreTrainedModel):
 
     def __init__(self, config):
         super().__init__(config)
-        self.decoder = HoloDecoder(config)
+        #self.decoder = HoloDecoder(config)
         if config.position_embedding == 'learn':
             self.position_embedding = nn.Embedding(config.max_seq_len, config.model_dims)
         elif config.position_embedding == 'sin':
@@ -335,9 +356,17 @@ class HFHolo(PreTrainedModel):
         if config.rezero:
             self.norm = nn.Identity()
         else:
+            #self.norm = HRRLayerNorm(config.model_dims)
             self.norm = nn.LayerNorm(config.model_dims, bias=config.use_norm_bias)
 
+        self.dropout = nn.Dropout(0.1)
         self.predict_token = mup.MuReadout(config.model_dims, config.vocab_size, bias=False)
+        # self.result_vector = nn.Parameter(
+        #     torch.randn((1, 1, config.model_dims // 2 + 1)), requires_grad=True
+        # )
+        # self.result_vector = nn.Parameter(
+        #     hrr.init((1, 1, config.model_dims)), requires_grad=True
+        # )
         # self.register_buffer('result_vector', hrr.init((config.model_dims,)).contiguous())
         # self.cleanup_kv = CleanUpKV(config.model_dims)
         # self.fuck = nn.Linear(config.model_dims, config.model_dims, bias=False)
@@ -390,15 +419,15 @@ class HFHolo(PreTrainedModel):
 
         hrr_std = 1 / self.config.model_dims
         # depth_std = self.config.initializer_range / np.sqrt(2 * self.config.num_hidden_layers)
-        for name, module in module.named_modules():
-            for target_name in ('qkv',):
-                if target_name in name and query_zero_init:
-                    if hasattr(module.weight, 'infshape'):
-                        mup.init.normal_(module.weight, mean=0.0, std=hrr_std)
-                    else:
-                        module.weight.data.normal_(mean=0.0, std=hrr_std)
-                    if module.bias is not None:
-                        module.bias.data.zero_()
+        # for name, module in module.named_modules():
+        #     for target_name in ('qkv',):
+        #         if target_name in name and query_zero_init:
+        #             if hasattr(module.weight, 'infshape'):
+        #                 mup.init.normal_(module.weight, mean=0.0, std=hrr_std)
+        #             else:
+        #                 module.weight.data.normal_(mean=0.0, std=hrr_std)
+        #             if module.bias is not None:
+        #                 module.bias.data.zero_()
 
             # if "output" in name:
             #     if hasattr(module.weight, 'infshape'):
@@ -431,8 +460,10 @@ class HFHolo(PreTrainedModel):
             inputs = hrr.bind(tokens, positions)
         else:
             inputs = tokens + positions
-        feats = self.decoder(inputs, labels=None)
-        feats = self.norm(feats)
+        #feats = self.decoder(inputs, labels=None)
+        #feats = feats / (1e-8 + torch.norm(feats, dim=-1, keepdim=True))
+        feats = inputs
+        #feats = self.norm(feats)
         # feats = self.decoder(inputs, labels=labels)
         # feats = F.relu(feats)
         # feats = tokens #F.relu(tokens) #+ positions
@@ -440,11 +471,17 @@ class HFHolo(PreTrainedModel):
         # if labels is not None:
         #     feats, decoder_loss = feats
 
+        #feats = hrr.bind(feats, self.result_vector)
+        # feats = hrr.fft(feats)
+        # feats = feats * self.result_vector
+        # feats = hrr.ifft(feats)
         # feats = hrr.unbind(feats, self.result_vector)
         # feats = self.cleanup_kv(feats)
         # feats = feats / (torch.linalg.norm(feats, dim=-1, keepdim=True) + 1e-9)
+        feats = self.dropout(feats)
         logits = self.predict_token(feats)
-
+        # logits = logits / (1e-8 + torch.norm(logits, dim=-1, keepdim=True)) * self.config.vocab_size
+        
         loss = 0.
         if labels is not None:
             preds = logits[:, :-1].contiguous().view(-1, logits.shape[-1])
@@ -530,12 +567,14 @@ class HFHolo(PreTrainedModel):
             print('getting muP base shapes')
             base_kwargs = base_kwargs or {}
             delta_kwargs = delta_kwargs or {}
+            if not 'model_dims' in base_kwargs:
+                base_kwargs['model_dims'] = 128
+            if not 'model_dims' in delta_kwargs:
+                delta_kwargs['model_dims'] = 256
             base_config = HFHoloConfig(
-                model_dims=128,
                 **base_kwargs,
             )
             delta_config = HFHoloConfig(
-                model_dims=256,
                 **delta_kwargs
             )
             base_model = HFHolo(config=base_config)
@@ -654,6 +693,16 @@ class ASLSingleLabel(nn.Module):
             loss = loss.mean()
 
         return loss
+
+
+class HRRLayerNorm(nn.Module):
+    def __init__(self, dims):
+        super().__init__()
+        self.dims = dims
+        self.norm = nn.LayerNorm(dims)
+    
+    def forward(self, x):
+        return self.norm(x)# / self.dims
 
 
 HFHolo.register_for_auto_class("AutoModel")
