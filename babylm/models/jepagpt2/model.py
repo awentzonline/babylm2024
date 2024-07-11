@@ -990,7 +990,7 @@ class GPT2JEPALMHeadModel(GPT2PreTrainedModel):
         super().__init__(config)
         self.transformer = GPT2Model(config)
         ### muP: swap nn.Linear with MuReadout
-        self.lm_head = MuReadout(config.model_dims, config.vocab_size, bias=False)
+        self.predict_token = MuReadout(config.model_dims, config.vocab_size, bias=False)
         self.predict_next_latent = nn.Sequential(
             nn.Linear(config.model_dims, config.model_dims),
             nn.GELU(),
@@ -1007,13 +1007,13 @@ class GPT2JEPALMHeadModel(GPT2PreTrainedModel):
         self.post_init()
         self.ema_transformer = GPT2Model(config)
         self.ema_transformer.requires_grad_(False)
-        self.update_ema_transformer(1.)
+        self.update_ema_model(1.)
 
     @torch.no_grad()
-    def update_ema_transformer(self, weight):
+    def update_ema_model(self, weight):
         for p_a, p_b in zip(self.transformer.parameters(), self.ema_transformer.parameters()):
-            dp = (p_a - p_b) * weight
-            p_b.add_(dp)
+            dp = (p_a.data - p_b.data) * weight
+            p_b.data.add_(dp)
 
     @add_start_docstrings(PARALLELIZE_DOCSTRING)
     def parallelize(self, device_map=None):
@@ -1024,7 +1024,7 @@ class GPT2JEPALMHeadModel(GPT2PreTrainedModel):
         )
         assert_device_map(self.device_map, len(self.transformer.h))
         self.transformer.parallelize(self.device_map)
-        self.lm_head = self.lm_head.to(self.transformer.first_device)
+        self.predict_token = self.predict_token.to(self.transformer.first_device)
         self.predict_next_latent = self.predict_next_latent.to(self.transformer.first_device)
         self.model_parallel = True
 
@@ -1032,16 +1032,16 @@ class GPT2JEPALMHeadModel(GPT2PreTrainedModel):
     def deparallelize(self):
         self.transformer.deparallelize()
         self.transformer = self.transformer.to("cpu")
-        self.lm_head = self.lm_head.to("cpu")
+        self.predict_token = self.predict_token.to("cpu")
         self.predict_next_latent = self.predict_next_latent.to("cpu")
         self.model_parallel = False
         torch.cuda.empty_cache()
 
     def get_output_embeddings(self):
-        return self.lm_head
+        return self.predict_token
 
     def set_output_embeddings(self, new_embeddings):
-        self.lm_head = new_embeddings
+        self.predict_token = new_embeddings
 
     def prepare_inputs_for_generation(self, input_ids, past=None, **kwargs):
         token_type_ids = kwargs.get("token_type_ids", None)
@@ -1103,63 +1103,63 @@ class GPT2JEPALMHeadModel(GPT2PreTrainedModel):
         """
         return_dict = return_dict if return_dict is not None else self.config.use_return_dict
 
-        if labels is not None:
-            self.update_ema_transformer(self.config.ema_weight)
-
-        transformer_outputs = self.transformer(
-            input_ids,
-            past_key_values=past_key_values,
-            attention_mask=attention_mask,
-            token_type_ids=token_type_ids,
-            position_ids=position_ids,
-            head_mask=head_mask,
-            inputs_embeds=inputs_embeds,
-            encoder_hidden_states=encoder_hidden_states,
-            encoder_attention_mask=encoder_attention_mask,
-            use_cache=use_cache,
-            output_attentions=output_attentions,
-            output_hidden_states=output_hidden_states,
-            return_dict=return_dict,
-        )
-        hidden_states = transformer_outputs[0]
+        # if labels is not None:
+        #     self.update_ema_model(self.config.ema_weight)
 
         if labels is not None:
-            with torch.no_grad():
-                ema_transformer_outputs = self.ema_transformer(
-                    input_ids,
-                    past_key_values=past_key_values,
-                    attention_mask=attention_mask,
-                    token_type_ids=token_type_ids,
-                    position_ids=position_ids,
-                    head_mask=head_mask,
-                    inputs_embeds=inputs_embeds,
-                    encoder_hidden_states=encoder_hidden_states,
-                    encoder_attention_mask=encoder_attention_mask,
-                    use_cache=use_cache,
-                    output_attentions=output_attentions,
-                    output_hidden_states=output_hidden_states,
-                    return_dict=return_dict,
-                )
-            ema_hidden_states = ema_transformer_outputs[0].detach()
+            transformer_outputs = self.transformer(
+                input_ids,
+                past_key_values=past_key_values,
+                attention_mask=attention_mask,
+                token_type_ids=token_type_ids,
+                position_ids=position_ids,
+                head_mask=head_mask,
+                inputs_embeds=inputs_embeds,
+                encoder_hidden_states=encoder_hidden_states,
+                encoder_attention_mask=encoder_attention_mask,
+                use_cache=use_cache,
+                output_attentions=output_attentions,
+                output_hidden_states=output_hidden_states,
+                return_dict=return_dict,
+            )
+            hidden_states = transformer_outputs[0]
         else:
-            ema_hidden_states = None
+            hidden_states = None
+
+        with torch.no_grad():
+            ema_transformer_outputs = self.ema_transformer(
+                input_ids,
+                past_key_values=past_key_values,
+                attention_mask=attention_mask,
+                token_type_ids=token_type_ids,
+                position_ids=position_ids,
+                head_mask=head_mask,
+                inputs_embeds=inputs_embeds,
+                encoder_hidden_states=encoder_hidden_states,
+                encoder_attention_mask=encoder_attention_mask,
+                use_cache=use_cache,
+                output_attentions=output_attentions,
+                output_hidden_states=output_hidden_states,
+                return_dict=return_dict,
+            )
+        ema_hidden_states = ema_transformer_outputs[0].detach()
 
         # Set device for model parallelism
         if self.model_parallel:
             torch.cuda.set_device(self.transformer.first_device)
-            hidden_states = hidden_states.to(self.lm_head.weight.device)
+            if hidden_states is not None:
+                hidden_states = hidden_states.to(self.predict_token.weight.device)
             if ema_hidden_states is not None:
-                ema_hidden_states = ema_hidden_states.to(self.lm_head.weight.device)
-
-        hidden_states_activated = self.latent_activation(hidden_states)
-        pred_next_hidden_states = self.predict_next_latent(hidden_states_activated)
-        lm_pred_logits = self.lm_head(self.latent_activation(pred_next_hidden_states))
+                ema_hidden_states = ema_hidden_states.to(self.predict_token.weight.device)
 
         loss = None
         if labels is not None:
+            hidden_states_activated = self.latent_activation(hidden_states)
+            pred_next_hidden_states = self.predict_next_latent(hidden_states_activated)
+            lm_pred_logits = self.predict_token(self.latent_activation(pred_next_hidden_states))    
             latent_loss = self.f_latent_loss(pred_next_hidden_states[:, :-1], ema_hidden_states[:, 1:])
             # Get reconstruction loss
-            encoder_logits = self.lm_head(hidden_states_activated)
+            encoder_logits = self.predict_token(hidden_states_activated.detach())
             # Flatten the tokens
             recon_loss = F.cross_entropy(encoder_logits.view(-1, encoder_logits.size(-1)), labels.view(-1))
             if np.random.uniform() < 0.05:
@@ -1168,18 +1168,35 @@ class GPT2JEPALMHeadModel(GPT2PreTrainedModel):
                 print('latent/recno', latent_loss.item(), recon_loss.item())
             loss = latent_loss + recon_loss
 
+            if not return_dict:
+                output = (lm_pred_logits,) + transformer_outputs[1:]
+                return ((loss,) + output) if loss is not None else output
+            return CausalLMOutputWithCrossAttentions(
+                loss=loss,
+                logits=lm_pred_logits,
+                past_key_values=transformer_outputs.past_key_values,
+                hidden_states=transformer_outputs.hidden_states,
+                attentions=transformer_outputs.attentions,
+                cross_attentions=transformer_outputs.cross_attentions,
+            )
+        else:
+            hidden_states_activated = self.latent_activation(ema_hidden_states)
+            pred_next_hidden_states = self.predict_next_latent(hidden_states_activated)
+            lm_pred_logits = self.predict_token(self.latent_activation(pred_next_hidden_states))    
+            
         if not return_dict:
-            output = (lm_pred_logits,) + transformer_outputs[1:]
+            output = (lm_pred_logits,) + ema_transformer_outputs[1:]
             return ((loss,) + output) if loss is not None else output
 
         return CausalLMOutputWithCrossAttentions(
-            loss=loss,
-            logits=lm_pred_logits,
-            past_key_values=transformer_outputs.past_key_values,
-            hidden_states=transformer_outputs.hidden_states,
-            attentions=transformer_outputs.attentions,
-            cross_attentions=transformer_outputs.cross_attentions,
-        )
+                loss=loss,
+                logits=lm_pred_logits,
+                past_key_values=ema_transformer_outputs.past_key_values,
+                hidden_states=ema_transformer_outputs.hidden_states,
+                attentions=ema_transformer_outputs.attentions,
+                cross_attentions=ema_transformer_outputs.cross_attentions,
+            )
+        
 
     @staticmethod
     def _reorder_cache(past: Tuple[Tuple[torch.Tensor]], beam_idx: torch.Tensor) -> Tuple[Tuple[torch.Tensor]]:
@@ -1251,43 +1268,50 @@ class HybridActivation(nn.Module):
     def __init__(self, discrete_dims, head_dims):
         super().__init__()
         self.head_dims = head_dims
-        self.discrete_dims = discrete_dims - discrete_dims % head_dims
+        self.discrete_dims = 0 #discrete_dims - discrete_dims % head_dims
         self.discrete_activation = SimNorm(self.head_dims)
         self.continuous_activation = L2Norm()
 
     def forward(self, x):
-        dis_x = x[..., :self.discrete_dims]
-        dis_x = self.discrete_activation(dis_x)
+        # dis_x = x[..., :self.discrete_dims]
+        # dis_x = self.discrete_activation(dis_x)
         cont_x = x[..., self.discrete_dims:]
         cont_x = self.continuous_activation(cont_x)
-        return torch.concatenate([dis_x, cont_x], dim=-1)
+        return cont_x
+        #return torch.concatenate([dis_x, cont_x], dim=-1)
 
 
 class HybridLoss(nn.Module):
     def __init__(self, discrete_dims, head_dims):
         super().__init__()
         self.head_dims = head_dims
-        self.discrete_dims = discrete_dims - discrete_dims % head_dims
+        self.discrete_dims = 0  #discrete_dims - discrete_dims % head_dims
 
     def forward(self, x, y):
-        dis_x = x[..., :self.discrete_dims]
-        dis_x = dis_x.view(*dis_x.shape[:-1], -1, self.head_dims)
-        dis_y = y[..., :self.discrete_dims]
-        dis_y = dis_y.view(*dis_y.shape[:-1], -1, self.head_dims)
-        dis_x = F.log_softmax(dis_x, dim=-1)
-        dis_y = F.log_softmax(dis_y, dim=-1)
-        dis_loss = F.kl_div(dis_x, dis_y, log_target=True, reduction='mean').exp()
-
+        # dis_x = x[..., :self.discrete_dims].contiguous()
+        # dis_x = dis_x.view(-1, self.head_dims)
+        # dis_y = y[..., :self.discrete_dims].contiguous()
+        # dis_y = dis_y.view(-1, self.head_dims)
+        # dis_x = F.softmax(dis_x, dim=-1)
+        # dis_y = F.softmax(dis_y, dim=-1)
+        # dis_loss = F.cross_entropy(dis_x, dis_y.detach())
+        # # dis_x = F.log_softmax(dis_x, dim=-1)
+        # # dis_y = F.log_softmax(dis_y, dim=-1)
+        # # dis_loss = F.kl_div(dis_x, dis_y.detach(), log_target=True, reduction='batchmean')
+        dis_loss = 0
         cont_x = x[..., self.discrete_dims:]
         cont_y = y[..., self.discrete_dims:]
+        # cont_x = cont_x / (torch.linalg.norm(cont_x, dim=-1, keepdim=True) + 1e-8)
+        # cont_y = cont_y / (torch.linalg.norm(cont_y, dim=-1, keepdim=True) + 1e-8)
+        #cont_loss = F.smooth_l1_loss(cont_x, cont_y)
         #cont_loss = F.mse_loss(cont_x, cont_y)
-        cont_loss = -F.cosine_similarity(cont_x, cont_y).mean()
-        if np.random.uniform() < 0.05:
-            print(dis_x[0,0,0])
-            print(dis_y[0,0,0])
-            print(F.softmax(dis_x[0,0,0], dim=-1))
-            print(F.softmax(dis_y[0,0,0], dim=-1))
-            print('dis/cont', dis_loss.item(), cont_loss.item())
+        cont_loss = 2 - 2 * F.cosine_similarity(cont_x, cont_y, dim=-1).mean()
+        # if np.random.uniform() < 0.05:
+        #     print(dis_x[0])
+        #     print(dis_y[0])
+        #     print(F.softmax(dis_x[0], dim=-1))
+        #     print(F.softmax(dis_y[0], dim=-1))
+        #     print('dis/cont', dis_loss.item(), cont_loss.item())
         return dis_loss + cont_loss
 
 
