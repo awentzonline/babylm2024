@@ -58,6 +58,7 @@ from transformers.utils import check_min_version, send_example_telemetry
 from transformers.utils.versions import require_version
 
 from babylm.hf_mup_trainer import MuPTrainer
+from .callbacks import UpdateEMACallback
 
 
 # Will error if the minimal version of Transformers is not installed. Remove at your own risks.
@@ -545,10 +546,15 @@ def main():
             preds = preds[:, :-1].reshape(-1)
             return metric.compute(predictions=preds, references=labels)
 
+    callbacks = []
+    if hasattr(model, 'update_ema_model'):
+        callbacks.append(UpdateEMACallback())
+
     # Initialize our Trainer
     trainer = MuPTrainer(
     #trainer = Trainer(
         model=model,
+        callbacks=callbacks,
         args=training_args,
         train_dataset=train_dataset if training_args.do_train else None,
         eval_dataset=eval_dataset if training_args.do_eval else None,
