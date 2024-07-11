@@ -1,6 +1,7 @@
 import math
 from typing import Optional
 
+import mup
 import numpy as np
 import torch
 from torch import nn
@@ -12,11 +13,11 @@ from .config import HFVanConfig
 
 
 class VanAttention(nn.Module):
-    def __init__(self, model_dims, heads, dropout=0.1):
+    def __init__(self, model_dims, num_heads, dropout=0.1, **kwargs):
         super().__init__()
-        assert model_dims % heads == 0, 'Model dimensionality should be an integer multiple of heads'
-        self.head_dims = model_dims // heads
-        self.num_heads = heads
+        assert model_dims % num_heads == 0, 'Model dimensionality should be an integer multiple of heads'
+        self.head_dims = model_dims // num_heads
+        self.num_heads = num_heads
         self.model_dims = model_dims
         self.keys = nn.Linear(model_dims, model_dims, bias=False)
         self.values = nn.Linear(model_dims, model_dims, bias=False)
@@ -237,6 +238,31 @@ class HFVan(PreTrainedModel):
 
         return model_inputs
 
+    @classmethod
+    def mup_base_shapes(cls, filename=None, base_kwargs=None, delta_kwargs=None):
+        if not hasattr(cls, '_mup_base_shapes'):
+            print('getting muP base shapes')
+            base_kwargs = base_kwargs or {}
+            delta_kwargs = delta_kwargs or {}
+            if not 'model_dims' in base_kwargs:
+                base_kwargs['model_dims'] = 128
+            if not 'model_dims' in delta_kwargs:
+                delta_kwargs['model_dims'] = 256
+            base_config = HFVanConfig(
+                **base_kwargs,
+            )
+            delta_config = HFVanConfig(
+                **delta_kwargs
+            )
+            base_model = HFVanConfig(config=base_config)
+            delta_model = HFVanConfig(config=delta_config)
+            base_shapes = mup.make_base_shapes(base_model, delta_model, savefile=filename)
+            cls._mup_base_shapes = base_shapes
+            del base_model
+            del delta_model
+            base_model = delta_model = None
+        return cls._mup_base_shapes
+
 
 class PositionalEncoding(nn.Module):
     def __init__(self, d_model, max_seq_length):
@@ -257,3 +283,5 @@ class PositionalEncoding(nn.Module):
 
 AutoModel.register(HFVanConfig, VanDecoder)
 AutoModelForCausalLM.register(HFVanConfig, HFVan)
+HFVanConfig.register_for_auto_class("AutoModel")
+HFVanConfig.register_for_auto_class("AutoModelForCausalLM")
