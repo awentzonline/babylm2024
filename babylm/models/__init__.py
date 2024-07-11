@@ -9,3 +9,5 @@ from .jepagpt2.model import GPT2JEPALMHeadModel
 from .diffuse import VectorDiffuser, VectorDiffusionConfig
 from .diffuse_hrr import HRRDiffusionConfig
 from .diffuse_hrr import HRRDiffuser
+from .diffuse_gpt.config import GPT2DiffuserConfig
+from .diffuse_gpt.model import GPT2DiffuserLMHeadModel
