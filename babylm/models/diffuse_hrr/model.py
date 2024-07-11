@@ -275,16 +275,12 @@ class HRRDiffuser(PreTrainedModel):
                     x_tp1_noise_pos = hrr.bind(x_tp1_noise, x_tp1_position_embs)
                 else:
                     x_tp1_noise_pos = x_tp1_noise + x_tp1_position_embs
-                x_inputs = torch.concatenate([x, x_tp1_noise], dim=1)
+                x_inputs = torch.concatenate([x, x_tp1_noise_pos], dim=1)
                 pred_x_tp1_noise = self.decoder(x_inputs, conditions, labels=None)[:, -1]
                 x_tp1_noise = self.noise_scheduler.step(
                     pred_x_tp1_noise, t, x_tp1_noise, eta=eta, use_clipped_model_output=False, generator=None,
                 ).prev_sample
 
-            if self.config.hrr_embedding:
-                x_tp1_noise_pos = hrr.bind(x_tp1_noise, x_tp1_position_embs)
-            else:
-                x_tp1_noise_pos = x_tp1_noise + x_tp1_position_embs
             x_inputs = torch.concatenate([x, x_tp1_noise], dim=1)
             logits = self.predict_token(x_inputs)
         else:
