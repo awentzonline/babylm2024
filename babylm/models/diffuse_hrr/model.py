@@ -73,7 +73,7 @@ class MLP(nn.Module):
         )
         # move output to its own thing so we can target it for initialization
         self.output = nn.Linear(ff_dims, model_dims, bias=False)
-        
+
     def forward(self, x):
         return self.output(self.net(x))
 
@@ -260,7 +260,10 @@ class HRRDiffuser(PreTrainedModel):
         if labels is None:
             # generate
             time_embs = self.timestep_embedding(torch.LongTensor(0).to(self.device))
-            x = x + position_embs
+            if self.config.hrr_embedding:
+                x = hrr.bind(x, position_embs)
+            else:
+                x = x + position_embs
             x_tp1_noise = randn_tensor((bsz, 1, x.shape[-1]), generator=None, device=self.device, dtype=self.dtype)
             x_tp1_position_embs = self.position_embedding(torch.LongTensor([x.shape[1]]).to(self.device))[None, ...]
             self.noise_scheduler.set_timesteps(num_inference_steps)
@@ -268,12 +271,20 @@ class HRRDiffuser(PreTrainedModel):
                 timesteps = torch.LongTensor([t]).to(self.device)
                 time_embs = self.timestep_embedding(timesteps).unsqueeze(1)
                 conditions = time_embs
-                x_tp1_noise = x_tp1_noise + x_tp1_position_embs
+                if self.config.hrr_embedding:
+                    x_tp1_noise_pos = hrr.bind(x_tp1_noise, x_tp1_position_embs)
+                else:
+                    x_tp1_noise_pos = x_tp1_noise + x_tp1_position_embs
                 x_inputs = torch.concatenate([x, x_tp1_noise], dim=1)
                 pred_x_tp1_noise = self.decoder(x_inputs, conditions, labels=None)[:, -1]
                 x_tp1_noise = self.noise_scheduler.step(
                     pred_x_tp1_noise, t, x_tp1_noise, eta=eta, use_clipped_model_output=False, generator=None,
                 ).prev_sample
+
+            if self.config.hrr_embedding:
+                x_tp1_noise_pos = hrr.bind(x_tp1_noise, x_tp1_position_embs)
+            else:
+                x_tp1_noise_pos = x_tp1_noise + x_tp1_position_embs
             x_inputs = torch.concatenate([x, x_tp1_noise], dim=1)
             logits = self.predict_token(x_inputs)
         else:
@@ -283,25 +294,30 @@ class HRRDiffuser(PreTrainedModel):
             )
             time_embs = self.timestep_embedding(timesteps).unsqueeze(1)
             conditions = time_embs
-            x_t = x + position_embs
+            if self.config.hrr_embedding:
+                x_t = hrr.bind(x, position_embs)
+            else:
+                x_t = x + position_embs
             # Add noise to the model input according to the noise magnitude at each timestep
             # (this is the forward diffusion process)
             noisy_x = self.noise_scheduler.add_noise(x_t, noise, timesteps)
             pred_x = self.decoder(noisy_x, conditions, labels=None)
 
             if self.noise_scheduler.config.prediction_type == "epsilon":
-                x_target = noise
+                target_x = noise
             elif self.noise_scheduler.config.prediction_type == "v_prediction":
-                x_target = self.noise_scheduler.get_velocity(x_t, noise, timesteps)
+                target_x = self.noise_scheduler.get_velocity(x_t, noise, timesteps)
             else:
                 raise ValueError(f"Unknown prediction type {self.noise_scheduler.config.prediction_type}")
 
-            recon_noise_loss = F.mse_loss(pred_x, x_target)
+            recon_noise_loss = F.mse_loss(pred_x, target_x)
 
             # train a model to decode tokens from the input embeddings
             # logits = self.predict_token(F.normalize(input_embs, dim=-1))
             # input_embs = self.noise_scheduler.add_noise(x_tp1, x_tp1_noise, timesteps)
-            logits = self.predict_token(input_embs)
+            time_embs = self.timestep_embedding(torch.LongTensor(0).to(self.device))
+            input_embs_0 = self.noise_scheduler.add_noise(input_embs, noise, timesteps)
+            logits = self.predict_token(input_embs_0)
             decode_tokens_loss = F.cross_entropy(
                 logits.view(-1, logits.shape[-1]),
                 input_ids.view(-1)  # [:, 1:].contiguous().view(-1)
