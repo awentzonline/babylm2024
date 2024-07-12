@@ -165,6 +165,7 @@ class GPT2DiffuserConfig(PretrainedConfig):
         scale_attn_by_inverse_layer_idx=False,
         reorder_and_upcast_attn=False,
         ema_weight=0.01,
+        tie_word_embeddings: bool = False,
         ### muP
         attn_mult=None,
         ### diffusion
@@ -224,7 +225,10 @@ class GPT2DiffuserConfig(PretrainedConfig):
         if noise_scheduler_config is not None:
             self.noise_scheduler_config.update(noise_scheduler_config)
 
-        super().__init__(bos_token_id=bos_token_id, eos_token_id=eos_token_id, **kwargs)
+        super().__init__(
+            bos_token_id=bos_token_id, eos_token_id=eos_token_id,
+            tie_word_embeddings=tie_word_embeddings, **kwargs
+        )
 
 
 AutoConfig.register(GPT2DiffuserConfig.model_type, GPT2DiffuserConfig)
